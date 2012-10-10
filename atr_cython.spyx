@@ -1,0 +1,603 @@
+from sage.rings.all import RealField, ComplexField, CDF, RDF, ZZ, Infinity
+from sage.rings.all import next_prime, kronecker_symbol
+from sage.schemes.elliptic_curves.all import EllipticCurve
+# from sage.libs.flint.long_extras cimport * 
+from itertools import product
+from bisect import bisect_left
+
+cdef extern from "complex.h":
+    long double complex cexpl(long double complex z)
+    long double cabsl(long double complex z)
+    long double complex conjl(long double complex z)
+    long double cimagl(long double complex z)
+    long double creall(long double complex z)
+    long double complex csqrtl(long double complex z)
+
+cdef extern from "stdlib.h":
+    double atof(char *nptr )
+
+cdef extern from "math.h":
+    long double fabsl(long double z)
+    long double powl(long double z,int n)
+    long double log(long double z)
+    long double rint(long double z)
+    int snprintf (char *s, size_t size, char *format, ...)
+
+# cdef extern from "quadmath.h":
+#     ctypedef long double __float128  "__float128"
+#     ctypedef long double __complex128 "__complex128"
+#     __complex128 cexpq(__complex128 z)
+#     __complex128 cexpiq(__float128 z)
+#     __complex128 clogq(__complex128 z)
+#     __float128 cabsq(__complex128 z)
+#     __complex128 conjq(__complex128 z)
+#     __float128 cimagq(__complex128 z)
+#     __float128 crealq(__complex128 z)
+#     __complex128 csqrtq(__complex128 z)
+#     __float128 fabsq(__float128 z)
+#     __float128 powq(__float128 z,int n)
+#     __complex128 cpowq(__complex128 z,double n)
+#     __float128 strtoflt128 (char *s, char **sp)
+#     int quadmath_snprintf (char *s, size_t size, char *format, ...)
+#     # Define pi and pi/2
+#     __float128 M_PIq,M_PI_2q
+# 
+# 
+
+
+
+def compute_coeffs_p_cython(F,long max_norm,p_range,Ainv,v0,v1,e2):
+    def equalize(x):
+        x0,x1=v0(x),v1(x)
+        if not (x0>0 and x1>0):
+            x=-x
+            x0,x1=-x0,-x1
+        e0=v0(e2).abs()
+        assert e0>1
+        while x0*e0<x1:
+            x*=e2
+            x0,x1=x0*e0,x1/e0
+        while x0>x1*e0:
+            x/=e2
+            x0,x1=x0/e0,x1*e0
+        return x
+    new_aprs=[]
+    for indx,p in p_range:
+        eltlist=[equalize(xx) for xx in F.elements_of_norm(p)]
+        aprs_p=[[(F(1),1,v0(1),v1(1))],[(x,EllipticCurve(F.residue_field(x), Ainv).trace_of_frobenius(),v0(x),v1(x)) for x in eltlist]]
+        r=1
+        n=p
+        splitting_type=kronecker_symbol(F.discriminant(),p)
+        while True:
+            n*=p
+            r+=1
+            if n>=max_norm:
+                break
+            eltlist=[equalize(xx) for xx in F.elements_of_norm(n)]
+            if(splitting_type==1): # split
+                anspp=aprs_p[1]
+                ansp=anspp[0]
+                ansnpp=aprs_p[r-1]
+                ansnp=ansnpp[0]
+                ansnp22=aprs_p[r-2]
+                elt=equalize(ansp[0]*ansnp[0])
+                coeff=ansp[1]*ansnp[1]-p*ansnp22[0][1]
+                newan=[ (elt,coeff,v0(elt),v1(elt)) ]
+                for i in range(1,r):
+                    anspi=aprs_p[i][0]
+                    ansnpi=aprs_p[r-i][r-i]
+                    elt=equalize(anspi[0]*ansnpi[0])
+                    coeff=anspi[1]*ansnpi[1]
+                    newan.append( (elt,coeff,v0(elt),v1(elt)) )
+                ansp=anspp[1]
+                ansnp=ansnpp[r-1]
+                elt=equalize(ansp[0]*ansnp[0])
+                coeff=ansp[1]*ansnp[1]-p*ansnp22[r-2][1]
+                newan.append( (elt,coeff,v0(elt),v1(elt)) )
+
+            elif(splitting_type==0): # ramified
+                ansp=aprs_p[1][0]
+                ansnp=aprs_p[r-1][0]
+                elt=equalize(ansp[0]*ansnp[0])
+                coeff=ansp[1]*ansnp[1]-p*aprs_p[r-2][0][1]
+                newan=[ (elt,coeff,v0(elt),v1(elt)) ]
+
+            elif r%2==0: # inert
+                if r==2:
+                    xx=eltlist[0]
+                    R=F.residue_field(xx)
+                    newan=[ (xx,EllipticCurve(R,Ainv).trace_of_frobenius(),v0(xx),v1(xx)) ]
+                else:
+                    psquared=p**2
+                    anspsq=aprs_p[2][0]
+                    ansnpsq=aprs_p[r-2][0]
+                    elt=equalize(anspsq[0]*ansnpsq[0])
+                    coeff=anspsq[1]*ansnpsq[1]-psquared*aprs_p[r-4][0][1]
+                    newan=[ (elt,coeff,v0(elt),v1(elt)) ]
+            else:
+                newan=[]
+            aprs_p.append(newan)
+        new_aprs.append((p,aprs_p[1:]))
+    return new_aprs
+
+
+
+
+# # #this function computes the value the integral of -4\pi^2/sqrt{D}*f(z0,z1). The inferior limits are x=[x_0,x_1] and the upper limits are y=[y_0,y_1]. We #also pass an integer nloop, which is the number of terms of the series that we sum (well, we sum up to ideals of norm nloop, so nloop has to be less than the precision of the modular form). 
+# # #We sum each of the terms up to precision prec...BUT: this does not mean that the integral is computed up to precision prec!!!
+
+def integrate_quads(Points0, Points1, Points2, Points3,atrfield,hmf,m0,m1,int preci,int swap,int Npoints):
+    return integrate_doubles(Points0, Points1, Points2, Points3,atrfield,hmf,m0,m1,preci,swap,Npoints)
+
+# def integrate_quads(Points,atrfield,aprs,nloop,int preci,int swap):
+#     print 'Integrating %d points...'%(len(Points))
+#     cdef double prec=powl(2.0,-preci)
+#     Cf,Rf=ComplexField(128),RealField(128)
+#     cdef __float128  e02,unit,unitinv
+#     cdef char* mystr=NULL
+#     cdef int width = 30
+#     cdef int nn
+#     cdef char buf1[128]
+#     cdef char buf2[128]
+# 
+#     cdef char* buf1ptr=<char*>malloc(128*sizeof(char))
+#     cdef char* buf2ptr=<char*>malloc(128*sizeof(char))
+# 
+#     mystr_py=Rf(atrfield.e0**2).__str__()
+#     mystr=mystr_py
+#     e02=strtoflt128(mystr,NULL)
+# 
+#     cdef __complex128 e12=cpowq(e02,-1)
+#     cdef __complex128 d0,d1
+#     mystr_py=Rf(atrfield.d0).__str__()
+#     mystr=mystr_py
+#     d0=strtoflt128(mystr,NULL)
+#     mystr_py=Rf(atrfield.d1).__str__()
+#     mystr=mystr_py
+#     d1=strtoflt128(mystr,NULL)
+# 
+#     cdef __float128 aMoverm,am
+#     cdef unsigned long long m,Npoints,jj,kk
+#     cdef __complex128 inc1,newval,newval0,val=0,oldval=0,tmp
+#     cdef __float128 threshold
+#     cdef int sign,conjug,i
+#     infinity=Cf(Infinity)
+#     cdef __float128 twopi=2*M_PIq
+#     cdef __complex128 twopiI
+#     cdef __complex128 I128=cexpiq(M_PI_2q)
+#     twopiI=twopi*I128
+#     cdef __float128 e02normalized=fabsq(e02),e02normalized_inv
+#     if Rf(atrfield.e0**2).abs()<1:
+#         e02normalized=cpowq(e02normalized,-1)
+#     e02normalized_inv=cpowq(e02normalized,-1)
+#     cdef __float128 n0,n1,n0tmp,n1tmp,e02ii,e02to[30],e02tom[30]
+#     cdef __complex128 z0,z1,r0,r1,r0z0,r1z1,twopiI_overd0,twopiI_overd1
+#     e02ii=1
+#     for ii in range(30):
+#         e02to[ii]=e02ii
+#         e02tom[ii]=powq(e02ii,-1)
+#         e02ii*=e02
+# 
+#     twopiI_overd0=twopiI*powq(d0,-1)
+#     twopiI_overd1=twopiI*powq(d1,-1)
+#     Npoints=len(Points)
+#     cdef unsigned long long m0=nloop[0]
+#     cdef unsigned long long m1=nloop[len(nloop)-1]
+#     cdef list ans
+# 
+#     cdef __complex128* Points0=<__complex128*>malloc(len(Points)*sizeof(__complex128))
+#     cdef __complex128* Points1=<__complex128*>malloc(len(Points)*sizeof(__complex128))
+#     cdef char* mystr1=NULL
+#     cdef char* mystr2=NULL
+#     cdef int* Conjs=<int *>malloc(len(Points)*sizeof(int))
+#     cdef int* Signs=<int *>malloc(len(Points)*sizeof(int))
+#     cdef __float128 minv
+#     for ii in range(len(Points)):
+#         mystr_py1=Points[ii][0].real().__str__()
+#         mystr_py2=Points[ii][0].imag().__str__()
+#         mystr1=mystr_py1
+#         mystr2=mystr_py2
+#         Points0[ii]=strtoflt128(mystr1,NULL)+strtoflt128(mystr2,NULL)*I128
+#         mystr_py1=Points[ii][1].real().__str__()
+#         mystr_py2=Points[ii][1].imag().__str__()
+#         mystr1=mystr_py1
+#         mystr2=mystr_py2
+#         Points1[ii]=strtoflt128(mystr1,NULL)+strtoflt128(mystr2,NULL)*I128
+#         Conjs[ii]=Points[ii][2]
+#         Signs[ii]=Points[ii][3]
+# 
+#     for m in range(m1,m0-1,-1):
+#         minv=powq(m,-1)
+#         # if m%1000==0:
+#         #     print val*Dsqrt
+#         if m==1:
+#             ff=[(1,0)]
+#         else:
+#             ff=ZZ(m).factor()
+#         # compute the products
+#         try:
+#             I=product(*[aprs[p][r] for p,r in ff])
+#         except TypeError: continue
+#         for vv in I:
+#             am=1
+#             for v in vv:
+#                 am*=v[1]
+#             if am==0:
+#                 continue
+# 
+#             n0=1.0
+#             n1=1.0
+#             if swap:
+#                 for v in vv:
+#                     n0*=strtoflt128(v[3],NULL)
+#                     n1*=strtoflt128(v[2],NULL)
+#             else:
+#                 for v in vv:
+#                     n0*=strtoflt128(v[2],NULL)
+#                     n1*=strtoflt128(v[3],NULL)
+# 
+#             aMoverm=am*minv
+#             threshold=fabsq(prec*powq(aMoverm*Npoints,-1))
+#             r0=twopiI_overd0*n0
+#             r1=twopiI_overd1*n1
+#             if n0<0.0:
+#                 r0=-r0
+#                 r1=-r1
+#             newval=0.0
+#             for jj in range(Npoints):
+#                 z0=Points0[jj]
+#                 z1=Points1[jj]
+#                 conjug=Conjs[jj]
+#                 sign=Signs[jj]
+#                 r0z0=r0*z0
+#                 r1z1=r1*z1
+# 
+#                 tmp=r0z0*e02normalized
+#                 while fabsq(crealq(tmp))<fabsq(crealq(r1z1)):
+#                     r0z0=tmp
+#                     r1z1*=e02normalized_inv
+#                     tmp=r0z0*e02normalized
+#                 tmp=r1z1*e02normalized
+#                 while fabsq(crealq(r0z0))>fabsq(crealq(tmp)):
+#                     r0z0*=e02normalized_inv
+#                     r1z1=tmp
+#                     tmp=r1z1*e02normalized
+# 
+#                 newval0=cexpq(r0z0+r1z1)
+#                 inc1=newval0
+#                 i=1
+#                 while cabsq(inc1)>threshold:
+#                     unit=e02to[i]
+#                     unitinv=e02tom[i]
+#                     inc1=cexpq(r0z0*unit+r1z1*unitinv)+cexpq(r0z0*unitinv+r1z1*unit)
+#                     newval0+=inc1
+#                     i+=1
+#                 if conjug==-1:
+#                     newval0=conjq(newval0)
+# 
+#                 if sign==1:
+#                     newval+=newval0
+#                 else:
+#                     newval-=newval0
+#             val+=aMoverm*newval
+#     quadmath_snprintf (buf1, sizeof(buf1), "%+-#*.30Qf", width, crealq(val))
+#     quadmath_snprintf (buf2, sizeof(buf2), "%+-#*.30Qf", width, cimagq(val))
+#     return ComplexField(2*preci)(atrfield.base.discriminant()).sqrt()*(ComplexField(2*preci)(buf1)+ComplexField(2*preci).gen()*ComplexField(2*preci)(buf2))
+def get_all_combinations_small(hmf,ff,source):
+    v0,v1,e2=hmf.v0,hmf.v1,hmf.e2
+    if v0(e2).abs()<1:
+        e2=1/e2
+    def equalize(dd1,dd2):
+        x=dd1[0]*dd2[0]
+        x0,x1=v0(x),v1(x)
+        if not (x0>0 and x1>0):
+            x=-x
+            x0,x1=-x0,-x1
+        e0=v0(e2).abs()
+        assert e0>1
+        while x0*e0<x1:
+            x*=e2
+            x0,x1=x0*e0,x1/e0
+        while x0>x1*e0:
+            x/=e2
+            x0,x1=x0/e0,x1*e0
+        return (x,dd1[1]*dd2[1],v0(x),v1(x))
+
+    def rloop(seqin,listout,comb):
+        if seqin:                       # any more sequences to process?
+            for item in seqin[0]:
+                if item[1]==0: continue
+                newcomb=equalize(comb,item)
+                # call rloop w/ rem seqs, newcomb
+                rloop(seqin[1:],listout,newcomb)
+        else:                           # processing last sequence
+            listout.append(comb)
+        return
+    seqin=[]
+    listout=[]                      # listout initialization
+    if any([r%2==1 and kronecker_symbol(hmf.F.discriminant(),p)==-1 for p,r in ff]):
+        return listout
+    seqin=[source[p][r-1] for p,r in ff]
+    rloop(seqin,listout,(1,1,1.0,1.0))  # start recursive process
+    return listout
+
+def get_all_combinations(hmf,ff):
+    v0,v1,e2=hmf.v0,hmf.v1,hmf.e2
+    if v0(e2).abs()<1:
+        e2=1/e2
+    def equalize(dd1,dd2):
+        x=dd1[0]*dd2[0]
+        x0,x1=v0(x),v1(x)
+        if not (x0>0 and x1>0):
+            x=-x
+            x0,x1=-x0,-x1
+        e0=v0(e2).abs()
+        assert e0>1
+        while x0*e0<x1:
+            x*=e2
+            x0,x1=x0*e0,x1/e0
+        while x0>x1*e0:
+            x/=e2
+            x0,x1=x0/e0,x1*e0
+        return (x,dd1[1]*dd2[1],v0(x),v1(x))
+
+    def rloop(seqin,listout,comb):
+        if seqin:                       # any more sequences to process?
+            for item in seqin[0]:
+                if item[0]==0: continue
+                newcomb=equalize(comb,item)
+                # call rloop w/ rem seqs, newcomb
+                rloop(seqin[1:],listout,newcomb)
+        else:                           # processing last sequence
+            listout.append(comb)
+        return
+    seqin=[]
+    listout=[]                      # listout initialization
+    if any([r%2==1 and kronecker_symbol(hmf.F.discriminant(),p)==-1 for p,r in ff]):
+        return listout
+    seqin=[hmf.aprs_small[p][r-1] for p,r in ff]
+    rloop(seqin,listout,(1,1,1.0,1.0))         # start recursive process
+    return listout
+
+cpdef equalize_pair(dd1,dd2,v0,v1,e2):
+    x=dd1[0]*dd2[0]
+    x0,x1=v0(x),v1(x)
+    if not (x0>0 and x1>0):
+        x=-x
+        x0,x1=-x0,-x1
+    e0=v0(e2).abs()
+    assert e0>1
+    while x0*e0<x1:
+        x*=e2
+        x0,x1=x0*e0,x1/e0
+    while x0>x1*e0:
+        x/=e2
+        x0,x1=x0/e0,x1*e0
+    return (x,dd1[1]*dd2[1],v0(x),v1(x))
+
+#def integrate_doubles(Points0r, Points0i,Points1r, Points1i, Points2, Points3,atrfield,hmf,long int m0,long int m1,int preci,int swap,unsigned long Npoints):
+# cdef long double complex integrate_doubles(Points,atrfield,hmf,nloop,int preci,int swap,unsigned long Npoints):
+def integrate_doubles(Points0,Points1,Points2,Points3,atrfield,hmf,long int m0,long int m1,int preci,int swap,unsigned long Npoints):
+    v0,v1,e2=hmf.v0,hmf.v1,hmf.e2
+ 
+    D=atrfield.base.discriminant()
+    # print 'Integrating %d points...'%(Npoints)
+    cdef double prec=powl(2.0,-preci)
+    assert(preci==53)
+    Cf,Rf=CDF,RDF
+    cdef long double complex Dsqrt=Cf(atrfield.base.discriminant()).sqrt()
+    cdef long double  e02=Rf(atrfield.e0**2),unit,unitinv
+    cdef long double complex e12=1.0/e02
+    cdef long double complex d0=Cf(atrfield.d0)
+    cdef long double complex d1=Cf(atrfield.d1)
+    cdef long double complex *z0vec=<long double complex *>malloc(sizeof(long double complex)*Npoints)
+    cdef long double complex *z1vec=<long double complex *>malloc(sizeof(long double complex)*Npoints)
+    cdef long double aMoverm,am
+    cdef unsigned long long m,jj
+    cdef long double complex inc1,newval,newval0,val=0,oldval=0,tmp
+    cdef long double threshold
+    cdef int sign,conjug,i
+    infinity=Cf(Infinity)
+    cdef long double twopi=8*Rf(1).arctan()
+    cdef long double complex imag_unit=csqrtl(-1)
+    cdef long double complex twopiI=twopi*csqrtl(-1)
+    cdef long double e02normalized=fabsl(e02),e02normalized_inv
+    if e02normalized<1:
+        e02normalized=1.0/e02normalized
+    e02normalized_inv=1.0/e02normalized
+    cdef long double n0,n1,e02ii,e02to[50],e02toinv[50]
+    cdef long double complex z0,z1,r0,r1,r0z0,r1z1,twopiI_overd0,twopiI_overd1
+    e02ii=1
+    for ii in range(50):
+        e02to[ii]=e02ii
+        e02toinv[ii]=1.0/e02ii
+        e02ii*=e02
+
+    twopiI_overd0=twopiI/d0
+    twopiI_overd1=twopiI/d1
+    for jj in range(Npoints):
+        z0vec[jj]=Points0[jj] #Points0r[jj]+Points0i[jj]*imag_unit
+        z1vec[jj]=Points1[jj] #Points1r[jj]+Points1i[jj]*imag_unit
+    sig_on()
+    for m in range(m1-1,m0-1,-1):
+        minv = 1.0/m
+        if m>1:
+            ff=ZZ(m).factor()
+            if len(ff)>1:
+                m1=ff[len(ff)-1][0]
+                if m1>=hmf.small_norm: # This should happen most of the time
+                    m0=m/m1
+                    if kronecker_symbol(D,m1)==-1: continue
+                    II=[equalize_pair(data1,data2,v0,v1,e2) for data1 in hmf.ans_small[m0] for data2 in hmf.aprs_large[bisect_left(hmf.large_primes,m1)]]
+                else:
+                    II=get_all_combinations(hmf,ff)
+            else: # m is a prime power
+                if ff[0][0]>=hmf.small_norm:
+                    if kronecker_symbol(D,m)==-1: continue
+                    II=hmf.aprs_large[bisect_left(hmf.large_primes,m)]
+                else:
+                    if m<hmf.small_norm:
+                        II=hmf.ans_small[m]
+                    else:
+                        II=get_all_combinations_small(hmf,ff,hmf.aprs_small)
+
+        else:
+            I=[[(None,1,1.0,1.0)]]
+            II=[(None,1,1.0,1.0)]
+        for _,am,n0,n1 in II:
+            if am==0: continue
+            if swap: n0,n1=n1,n0
+            aMoverm=am*minv
+            threshold=fabsl(prec/(aMoverm*Npoints))
+            r0=twopiI_overd0*n0
+            r1=twopiI_overd1*n1
+            if n0<0.0:
+                r0,r1=-r0,-r1
+            newval=0.0
+            for jj in range(Npoints):
+                # z0=Points0r[jj]+Points0i[jj]*imag_unit
+                # z1=Points1r[jj]+Points1i[jj]*imag_unit
+                conjug=Points2[jj]
+                sign=Points3[jj]
+                # z0,z1,conjug,sign=Points[jj]
+                r0z0=r0*z0vec[jj]
+                r1z1=r1*z1vec[jj]
+                tmp=r0z0*e02normalized
+                while fabsl(creall(tmp))<fabsl(creall(r1z1)):
+                    r0z0=tmp
+                    r1z1*=e02normalized_inv
+                    tmp=r0z0*e02normalized
+                tmp=r1z1*e02normalized
+                while fabsl(creall(r0z0))>fabsl(creall(tmp)):
+                    r0z0*=e02normalized_inv
+                    r1z1=tmp
+                    tmp=r1z1*e02normalized
+                newval0=cexpl(r0z0+r1z1)
+                inc1=newval0
+                i=1
+                while cabsl(inc1)>threshold:
+                    unit=e02to[i]
+                    unitinv=e02toinv[i]
+                    inc1=cexpl(r0z0*unit+r1z1*unitinv)+cexpl(r0z0*unitinv+r1z1*unit)
+                    newval0+=inc1
+                    i+=1
+                if conjug==-1:
+                    newval0=conjl(newval0)
+                if sign==1:
+                    newval+=newval0
+                else:
+                    newval-=newval0
+            val+=aMoverm*newval
+    sig_off()
+    free(z0vec)
+    free(z1vec)
+    return val*Dsqrt
+
+
+def integrate_hiprec(Points0,Points1,Points2,Points3,atrfield,hmf,long int m0,long int m1,int preci,int swap,unsigned long Npoints):
+    # print 'Integrating in high precision!'
+    v0,v1,e2=hmf.v0,hmf.v1,hmf.e2
+    D=atrfield.base.discriminant()
+    # print 'Integrating %d points...'%(Npoints)
+    Cf,Rf=ComplexField(2*preci),RealField(2*preci)
+    prec=Rf(2)**(-preci)
+
+    Dsqrt=Cf(atrfield.base.discriminant()).sqrt()
+    e02=Rf(atrfield.e0**2)
+    e12=1.0/e02
+    d0=Cf(atrfield.d0)
+    d1=Cf(atrfield.d1)
+    cdef unsigned long long m,jj
+    cdef int sign,conjug,i
+    val=Cf(0)
+    oldval=Cf(0)
+    infinity=Cf(Infinity)
+    twopi=8*Rf(1).arctan()
+    twopiI=twopi*Cf.gen()
+    e02normalized=e02.abs()
+    e02normalized_inv=1/e02normalized
+    if e02normalized<1:
+        e02normalized,e02normalized_inv=e02normalized_inv,e02normalized
+    e02to=[0]*50
+    e02toinv=[0]*50
+    e02ii=Rf(1)
+    for ii in range(50):
+        e02to[ii]=e02ii
+        e02toinv[ii]=Rf(1)/e02ii
+        e02ii*=e02
+
+    twopiI_overd0=twopiI/d0
+    twopiI_overd1=twopiI/d1
+    sig_on()
+    for m in range(m1-1,m0-1,-1):
+        # if m%100==0:
+        #     print threshold
+        #     print m
+        minv = 1/Rf(m)
+        if m>1:
+            ff=ZZ(m).factor()
+            if len(ff)>1:
+                m1=ff[len(ff)-1][0]
+                if m1>=hmf.small_norm: # This should happen most of the time
+                    m0=m/m1
+                    if kronecker_symbol(D,m1)==-1: continue
+                    II=[equalize_pair(data1,data2,v0,v1,e2) for data1 in hmf.ans_small[m0] for data2 in hmf.aprs_large[bisect_left(hmf.large_primes,m1)]]
+                else:
+                    II=get_all_combinations(hmf,ff)
+            else: # m is a prime power
+                if ff[0][0]>=hmf.small_norm:
+                    if kronecker_symbol(D,m)==-1: continue
+                    II=hmf.aprs_large[bisect_left(hmf.large_primes,m)]
+                else:
+                    if m<hmf.small_norm:
+                        II=hmf.ans_small[m]
+                    else:
+                        II=get_all_combinations_small(hmf,ff,hmf.aprs_small)
+
+        else:
+            I=[[(1,1,1.0,1.0)]]
+            II=[(1,1,1.0,1.0)]
+        for nn,am,n0,n1 in II:
+            if am==0: continue
+            n0,n1=v0(nn),v1(nn)
+            #if swap: n0,n1=n1,n0
+            aMoverm=am*minv
+            threshold=(prec/aMoverm).abs()
+            r0=twopiI_overd0*n0
+            r1=twopiI_overd1*n1
+            if n0<0:
+                r0,r1=-r0,-r1
+            newval=Cf(0)
+            for jj in range(Npoints):
+                conjug=Points2[jj]
+                sign=Points3[jj]
+                r0z0=r0*Points0[jj]
+                r1z1=r1*Points1[jj]
+                tmp=r0z0*e02normalized
+                while tmp.real().abs()<r1z1.real().abs():
+                    r0z0=tmp
+                    r1z1*=e02normalized_inv
+                    tmp=r0z0*e02normalized
+                tmp=r1z1*e02normalized
+                while r0z0.real().abs()>tmp.real().abs():
+                    r0z0*=e02normalized_inv
+                    r1z1=tmp
+                    tmp=r1z1*e02normalized
+                newval0=(r0z0+r1z1).exp()
+                inc1=newval0
+                i=1
+                while (inc1).abs()>threshold:
+                    unit=e02to[i]
+                    unitinv=e02toinv[i]
+                    inc1=(r0z0*unit+r1z1*unitinv).exp()+(r0z0*unitinv+r1z1*unit).exp()
+                    newval0+=inc1
+                    i+=1
+                if conjug==-1:
+                    newval0=newval0.conjugate()
+                if sign==1:
+                    newval+=newval0
+                else:
+                    newval-=newval0
+            val+=aMoverm*newval
+    sig_off()
+    return val*Dsqrt
