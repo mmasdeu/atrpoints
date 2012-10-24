@@ -12,7 +12,7 @@ from bisect import bisect_left
 NCPUS=sage.parallel.ncpus.ncpus()
 from sage.parallel.all import fork
 sys.setrecursionlimit(10**7)
-load 'quadratic_continued_fraction.sage'
+load 'quadcontfrac.sage'
 
 load 'atr_cython.spyx'
 
