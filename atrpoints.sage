@@ -12,9 +12,9 @@ from bisect import bisect_left
 NCPUS=sage.parallel.ncpus.ncpus()
 from sage.parallel.all import fork
 sys.setrecursionlimit(10**7)
-load 'quadcontfrac.sage'
+from quadcontfrac.sage import *
 
-load 'atr_cython.spyx'
+#load 'atr_cython.spyx'
 
 class Limit(SageObject):
     def __init__(self,x0,x1,y0,y1,conj=1):

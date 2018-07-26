@@ -5,7 +5,7 @@ The file that runs the tests
 from sage.parallel.all import fork
 from itertools import product
 from operator import itemgetter, attrgetter
-load 'atrpoints.sage'
+from atrpoints import *
 sys.setrecursionlimit(10**7)
 
 F.<r>=QuadraticField(29)
@@ -53,7 +53,7 @@ E509 = EllipticCurve(F,[-1, 2+2*w, -w, 162+3*w, 71+34*w])
    small will either not find any expansion, or will not find the optimal one.
 '''
 
-T = TestDL(E29, prec = 14, working_prec=53)
+T = TestDL(E29, prec = 20, working_prec=53)
 T.check_conjecture(x_coord_29[2], max_length = 8)
 
 a = E109.base_ring().gen()

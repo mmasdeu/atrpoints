@@ -1,9 +1,13 @@
 from sage.rings.all import RealField, ComplexField, CDF, RDF, ZZ, Infinity
-from sage.rings.all import next_prime, kronecker_symbol
+from sage.arith.misc import next_prime, kronecker_symbol
 from sage.schemes.elliptic_curves.all import EllipticCurve
 # from sage.libs.flint.long_extras cimport * 
 from itertools import product
 from bisect import bisect_left
+
+from libc.math cimport sqrt
+from cysignals.signals cimport sig_on, sig_off
+from libc.stdlib cimport malloc, free
 
 cdef extern from "complex.h":
     long double complex cexpl(long double complex z)
@@ -494,110 +498,110 @@ def integrate_doubles(Points0,Points1,Points2,Points3,atrfield,hmf,long int m0,l
     return val*Dsqrt
 
 
-def integrate_hiprec(Points0,Points1,Points2,Points3,atrfield,hmf,long int m0,long int m1,int preci,int swap,unsigned long Npoints):
-    # print 'Integrating in high precision!'
-    v0,v1,e2=hmf.v0,hmf.v1,hmf.e2
-    D=atrfield.base.discriminant()
-    # print 'Integrating %d points...'%(Npoints)
-    Cf,Rf=ComplexField(2*preci),RealField(2*preci)
-    prec=Rf(2)**(-preci)
+# def integrate_hiprec(Points0,Points1,Points2,Points3,atrfield,hmf,long int m0,long int m1,int preci,int swap,unsigned long Npoints):
+#     # print 'Integrating in high precision!'
+#     v0,v1,e2=hmf.v0,hmf.v1,hmf.e2
+#     D=atrfield.base.discriminant()
+#     # print 'Integrating %d points...'%(Npoints)
+#     Cf,Rf=ComplexField(2*preci),RealField(2*preci)
+#     prec=Rf(2)**(-preci)
 
-    Dsqrt=Cf(atrfield.base.discriminant()).sqrt()
-    e02=Rf(atrfield.e0**2)
-    e12=1.0/e02
-    d0=Cf(atrfield.d0)
-    d1=Cf(atrfield.d1)
-    cdef unsigned long long m,jj
-    cdef int sign,conjug,i
-    val=Cf(0)
-    oldval=Cf(0)
-    infinity=Cf(Infinity)
-    twopi=8*Rf(1).arctan()
-    twopiI=twopi*Cf.gen()
-    e02normalized=e02.abs()
-    e02normalized_inv=1/e02normalized
-    if e02normalized<1:
-        e02normalized,e02normalized_inv=e02normalized_inv,e02normalized
-    e02to=[0]*50
-    e02toinv=[0]*50
-    e02ii=Rf(1)
-    for ii in range(50):
-        e02to[ii]=e02ii
-        e02toinv[ii]=Rf(1)/e02ii
-        e02ii*=e02
+#     Dsqrt=Cf(atrfield.base.discriminant()).sqrt()
+#     e02=Rf(atrfield.e0**2)
+#     e12=1.0/e02
+#     d0=Cf(atrfield.d0)
+#     d1=Cf(atrfield.d1)
+#     cdef unsigned long long m,jj
+#     cdef int sign,conjug,i
+#     val=Cf(0)
+#     oldval=Cf(0)
+#     infinity=Cf(Infinity)
+#     twopi=8*Rf(1).arctan()
+#     twopiI=twopi*Cf.gen()
+#     e02normalized=e02.abs()
+#     e02normalized_inv=1/e02normalized
+#     if e02normalized<1:
+#         e02normalized,e02normalized_inv=e02normalized_inv,e02normalized
+#     e02to=[0]*50
+#     e02toinv=[0]*50
+#     e02ii=Rf(1)
+#     for ii in range(50):
+#         e02to[ii]=e02ii
+#         e02toinv[ii]=Rf(1)/e02ii
+#         e02ii*=e02
 
-    twopiI_overd0=twopiI/d0
-    twopiI_overd1=twopiI/d1
-    sig_on()
-    for m in range(m1-1,m0-1,-1):
-        # if m%100==0:
-        #     print threshold
-        #     print m
-        minv = 1/Rf(m)
-        if m>1:
-            ff=ZZ(m).factor()
-            if len(ff)>1:
-                m1=ff[len(ff)-1][0]
-                if m1>=hmf.small_norm: # This should happen most of the time
-                    m0=m/m1
-                    if kronecker_symbol(D,m1)==-1: continue
-                    II=[equalize_pair(data1,data2,v0,v1,e2) for data1 in hmf.ans_small[m0] for data2 in hmf.aprs_large[bisect_left(hmf.large_primes,m1)]]
-                else:
-                    II=get_all_combinations(hmf,ff)
-            else: # m is a prime power
-                if ff[0][0]>=hmf.small_norm:
-                    if kronecker_symbol(D,m)==-1: continue
-                    II=hmf.aprs_large[bisect_left(hmf.large_primes,m)]
-                else:
-                    if m<hmf.small_norm:
-                        II=hmf.ans_small[m]
-                    else:
-                        II=get_all_combinations_small(hmf,ff,hmf.aprs_small)
+#     twopiI_overd0=twopiI/d0
+#     twopiI_overd1=twopiI/d1
+#     sig_on()
+#     for m in range(m1-1,m0-1,-1):
+#         # if m%100==0:
+#         #     print threshold
+#         #     print m
+#         minv = 1/Rf(m)
+#         if m>1:
+#             ff=ZZ(m).factor()
+#             if len(ff)>1:
+#                 m1=ff[len(ff)-1][0]
+#                 if m1>=hmf.small_norm: # This should happen most of the time
+#                     m0=m/m1
+#                     if kronecker_symbol(D,m1)==-1: continue
+#                     II=[equalize_pair(data1,data2,v0,v1,e2) for data1 in hmf.ans_small[m0] for data2 in hmf.aprs_large[bisect_left(hmf.large_primes,m1)]]
+#                 else:
+#                     II=get_all_combinations(hmf,ff)
+#             else: # m is a prime power
+#                 if ff[0][0]>=hmf.small_norm:
+#                     if kronecker_symbol(D,m)==-1: continue
+#                     II=hmf.aprs_large[bisect_left(hmf.large_primes,m)]
+#                 else:
+#                     if m<hmf.small_norm:
+#                         II=hmf.ans_small[m]
+#                     else:
+#                         II=get_all_combinations_small(hmf,ff,hmf.aprs_small)
 
-        else:
-            I=[[(1,1,1.0,1.0)]]
-            II=[(1,1,1.0,1.0)]
-        for nn,am,n0,n1 in II:
-            if am==0: continue
-            n0,n1=v0(nn),v1(nn)
-            #if swap: n0,n1=n1,n0
-            aMoverm=am*minv
-            threshold=(prec/aMoverm).abs()
-            r0=twopiI_overd0*n0
-            r1=twopiI_overd1*n1
-            if n0<0:
-                r0,r1=-r0,-r1
-            newval=Cf(0)
-            for jj in range(Npoints):
-                conjug=Points2[jj]
-                sign=Points3[jj]
-                r0z0=r0*Points0[jj]
-                r1z1=r1*Points1[jj]
-                tmp=r0z0*e02normalized
-                while tmp.real().abs()<r1z1.real().abs():
-                    r0z0=tmp
-                    r1z1*=e02normalized_inv
-                    tmp=r0z0*e02normalized
-                tmp=r1z1*e02normalized
-                while r0z0.real().abs()>tmp.real().abs():
-                    r0z0*=e02normalized_inv
-                    r1z1=tmp
-                    tmp=r1z1*e02normalized
-                newval0=(r0z0+r1z1).exp()
-                inc1=newval0
-                i=1
-                while (inc1).abs()>threshold:
-                    unit=e02to[i]
-                    unitinv=e02toinv[i]
-                    inc1=(r0z0*unit+r1z1*unitinv).exp()+(r0z0*unitinv+r1z1*unit).exp()
-                    newval0+=inc1
-                    i+=1
-                if conjug==-1:
-                    newval0=newval0.conjugate()
-                if sign==1:
-                    newval+=newval0
-                else:
-                    newval-=newval0
-            val+=aMoverm*newval
-    sig_off()
-    return val*Dsqrt
+#         else:
+#             I=[[(1,1,1.0,1.0)]]
+#             II=[(1,1,1.0,1.0)]
+#         for nn,am,n0,n1 in II:
+#             if am==0: continue
+#             n0,n1=v0(nn),v1(nn)
+#             #if swap: n0,n1=n1,n0
+#             aMoverm=am*minv
+#             threshold=(prec/aMoverm).abs()
+#             r0=twopiI_overd0*n0
+#             r1=twopiI_overd1*n1
+#             if n0<0:
+#                 r0,r1=-r0,-r1
+#             newval=Cf(0)
+#             for jj in range(Npoints):
+#                 conjug=Points2[jj]
+#                 sign=Points3[jj]
+#                 r0z0=r0*Points0[jj]
+#                 r1z1=r1*Points1[jj]
+#                 tmp=r0z0*e02normalized
+#                 while tmp.real().abs()<r1z1.real().abs():
+#                     r0z0=tmp
+#                     r1z1*=e02normalized_inv
+#                     tmp=r0z0*e02normalized
+#                 tmp=r1z1*e02normalized
+#                 while r0z0.real().abs()>tmp.real().abs():
+#                     r0z0*=e02normalized_inv
+#                     r1z1=tmp
+#                     tmp=r1z1*e02normalized
+#                 newval0=(r0z0+r1z1).exp()
+#                 inc1=newval0
+#                 i=1
+#                 while (inc1).abs()>threshold:
+#                     unit=e02to[i]
+#                     unitinv=e02toinv[i]
+#                     inc1=(r0z0*unit+r1z1*unitinv).exp()+(r0z0*unitinv+r1z1*unit).exp()
+#                     newval0+=inc1
+#                     i+=1
+#                 if conjug==-1:
+#                     newval0=newval0.conjugate()
+#                 if sign==1:
+#                     newval+=newval0
+#                 else:
+#                     newval-=newval0
+#             val+=aMoverm*newval
+#     sig_off()
+#     return val*Dsqrt
