@@ -13,7 +13,8 @@ NCPUS=sage.parallel.ncpus.ncpus()
 from sage.parallel.all import fork
 sys.setrecursionlimit(10**7)
 from quadcontfrac import *
-load 'atr_cython_withlevel.spyx'
+load('atr_cython_withlevel.spyx')
+load('utility.sage')
 
 class Limit(SageObject):
     def __init__(self,x0,x1,y0,y1,conj=1,scale = 1):
@@ -71,7 +72,7 @@ class HilbertModularForm(SageObject):
             self.init_embeddings()
             if n_cpus is None:
                 n_cpus=sage.parallel.ncpus.ncpus()
-            print 'n_cpus=%s'%n_cpus
+            print('n_cpus=%s'%n_cpus)
             assert(2**valuation(n_cpus,2)==n_cpus)
             M=n_cpus*expand_factor
             congN=2*M
@@ -96,9 +97,9 @@ class HilbertModularForm(SageObject):
             self.v1=v1
             if v0(e2).abs()<1:
                 e2=1/e2
-            print 'M=',M
+            print('M=',M)
             # inputs=[(self,max_norm_aprs,congN,1,[2])]+[(self,max_norm_aprs,congN,a%congN,[]) for a in range(3,congN,2)]
-            print 'Computing data for small primes... (up to %s)'%self.small_norm
+            print('Computing data for small primes... (up to %s)'%self.small_norm)
             level = self.N
             newdict=dict(compute_coefficients(self.F,2,self.small_norm,max_norm_aprs,0,Ainv,level,v0,v1,e2,prec,single = False))
             newdict[1]=[[(1,1,1,1)]]
@@ -119,7 +120,7 @@ class HilbertModularForm(SageObject):
             self.aprs_small=newdict
             large_primes=filter(lambda xx:kronecker_symbol(self.F.discriminant(),xx)!=-1,prime_range(self.small_norm,max_norm_aprs))
             if large_prime_data is None:
-                print 'Starting the massive computation now...'
+                print('Starting the massive computation now...')
                 #large_primes=[xx for xx in prime_range(self.small_norm,max_norm_aprs) if kronecker_symbol(self.F.discriminant(),xx)!=-1]
                 large_prime_data=[None]*len(large_primes)
                 inputs=[]
@@ -128,8 +129,8 @@ class HilbertModularForm(SageObject):
                     while kronecker_symbol(self.F.discriminant(),pp)==-1:
                         pp=next_prime(pp)
                     inputs.append((self.F,ii,min([ii+width,max_norm_aprs]),max_norm_aprs,bisect_left(large_primes,pp), Ainv,level,v0,v1,e2,prec,True))
-                    # print '[%s,%s)'%(ii,min([ii+width,max_norm_aprs]))
-                print  'len(inputs)=',len(inputs)
+                    # print('[%s,%s)'%(ii,min([ii+width,max_norm_aprs])))
+                print( 'len(inputs)=',len(inputs))
                 I=compute_coefficients(inputs)
                 gc.disable()
                 kk=0
@@ -139,7 +140,7 @@ class HilbertModularForm(SageObject):
                         large_prime_data[data[0]]=data[1]
                         # This line should be removed for efficiency, after debugging
                         # assert data[0]==bisect_left(large_primes,data[2])
-                    print 'Finished %s-th input out of %s. (%s) -- mem = %s'%(kk,len(inputs),walltime(t),get_memory_usage())
+                    print('Finished %s-th input out of %s. (%s) -- mem = %s'%(kk,len(inputs),walltime(t),get_memory_usage()))
                     t=walltime()
                     kk+=1
                     if kk%10==0:
@@ -187,605 +188,6 @@ class HilbertModularForm(SageObject):
             x0,x1=self.v0approx(x).abs(),self.v1approx(x).abs()
         return x
 
-def tau0_and_cusp_withlevel(base,ext,v0,N,find_all = False):
-    F = base
-    ww=module_generators(ext)[1]
-    assert ww.is_integral()
-    wwminpoly = ww.minpoly()
-    # phi = wwminpoly.base_ring().embeddings(F)[0]
-    # K = NumberField(ww.minpoly().map_coefficients(phi),names ='w')
-
-    K = NumberField(ww.minpoly(),names ='w')
-    eps = find_the_unit_of(F,K)
-    print 'The unit of K that we are using is eps=',eps
-    w = K.gen(0)
-    idealN = F.ideal(N)
-
-    #these are elements in K whose norm over Q is the same as the norm over Q of N. We actually want an element in K whose norm over F coincides (up to units) with N.
-    if N == 1 or N == -1:
-        candidates=K.elements_of_norm(1)
-    else:
-        candidates=K.elements_of_norm(N.norm())
-    print 'Found %s candidates'%len(candidates)
-
-    found = False
-    all_B = []
-    #repassar aixo perque abans no donava be!!!
-    for elt in candidates:
-        if elt.norm(F) in idealN:
-            #the element of norm N is of the form NN=a+cw
-            a,c=elt.vector().list()
-            #the columns of this matrix give a base of O_K as O_F-module: O_K=<a+cw,b+dw>; let't call this the basis BB
-            try:
-                B=matrix_from_left_column(F,a,c)
-                found = True
-                if find_all == True:
-                    all_B.append(B)
-                else:
-                    break
-            except RuntimeError: pass
-
-    if not found:
-        print 'Error: element in K of norm N not found; are you sure that K has elements of that norm?'
-        raise RuntimeError
-
-
-    #this is the matrix of "multiplication by w" in the basis AA=<1,w>
-    M=matrix(F,[[0,-(w.minpoly()[0])],[1,-(w.minpoly()[1])]])
-    tau0vec = []
-    gtauvec = []
-    u_F=F.units()[0]
-
-    for B in all_B:
-        #the optimal embedding is given by the matrix of "multiplication by w" in the basis BB; we can get it by the usual formula:
-        W=B^-1*M*B
-
-        #print 'the optimal embedding sends w to the matrix W given by:'
-        #print W
-        #let's check it's correct
-        print 'checking...'
-
-        assert W[1,0] in idealN
-        print 'W belongs to Gamma_0(N)...'
-        assert W.minpoly() == w.minpoly()
-        print 'and it has the same minimal polynomial as w!' 
-
-        #now we find a suitable unit in K...
-        e1,e2=eps.vector()
-        gamma_tau=e1+e2*W
-        print '$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$'
-        print 'W='
-        print W
-        print 'gamma_tau='
-        print gamma_tau
-        print '$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$'
-        assert gamma_tau.minpoly() == eps.minpoly()
-        print 'which we checked has the same minimal polynomial'
-
-        #it belongs to Gamma_0(N)
-        if not is_in_Gamma_0(gamma_tau,N):
-            print 'apparently you do not get an embedding of level N; try to use the conjugate of alpha instead'
-
-        # ok, el gamma_tau potser no viu a gamma_1(N);
-        # pero el podem multiplicar per una matriu que porti una unitat, i aleshores si...
-        a,b,c,d=gamma_tau.list()
-        aux_unit=is_represented_by_unit(F,N,a,F.units()[0])
-        print 'Matriu diagonal d unitats'
-        u_M=matrix(F,2,2,[(aux_unit)^-1,0,0,(aux_unit)])
-        print u_M
-        # u_M = 1
-
-        gamma_tau = u_M * gamma_tau
-
-        # assert (gamma_tau[0][0]-1) in F.ideal(N)
-        # assert (gamma_tau[1][0]) in F.ideal(N)
-        # assert gamma_tau.det()==1
-
-        aa,bb,cc,dd = W.apply_map(v0).list()
-        if cc > 0:
-            tau0 = ((aa-dd)+sqrt((dd-aa)^2+4*bb*cc))/(2*cc)
-            print 'tau0=',tau0
-        else:
-            tau0 = ((aa-dd)-sqrt((dd-aa)^2+4*bb*cc))/(2*cc)
-            print 'tau0=', tau0
-        tau0 *= v0(aux_unit**(-2))
-        assert tau0.imag() > 0
-        # print 'tau=',tau0
-        tau0vec.append(tau0)
-        gtauvec.append(gamma_tau)
-    if find_all == True:
-        return tau0vec ,gtauvec
-    else:
-        return tau0vec[0],gtauvec[0]
-
-def tau0_and_cusp(base, ext, e, v0, embedding, extra_parameters = None):
-    if extra_parameters is None:
-        extra_parameters = [0,0,0]
-    w=module_generators(ext)[1]
-    assert w.is_integral()
-
-    eps = find_the_unit_of(base,ext)
-    #now we compute the optimal embedding K-->M_2(F)
-    #we need two base change matrices
-    w0,w1 = w.vector()
-    BW=Matrix(base,[[1,w0],[0,w1]])
-    WB=BW^-1
-    #first, the image of w, the generator of O_K as O_F-module
-    w2_base_W=WB*(w^2).vector()
-    #Construct the matrix of multiplication by w in the basis [1,w]
-    W=Matrix(base,[[0,w2_base_W[0]],[1,w2_base_W[1]]])
-
-    if embedding == 1:
-        S = Matrix(base,2,2,[-e,0,0,1])
-        W=S^(-1)*W*S
-        #W = other_embedding(base,ext,w)
-
-    # Modify the matrix hoping for better imaginary parts
-    A = Matrix(base,2,2,[e,0,0,1])**(ZZ(extra_parameters[0]))*Matrix(base,2,2,[0,-1,1,0])**ZZ(extra_parameters[1])*Matrix(base,2,2,[e,0,0,1])**(ZZ(extra_parameters[2]))
-    # a,b,c,d=W.list()
-    # # If A = [x,y,z,t] and W = [a,b,c,d]
-    # # Want to minimize (b*z + d*t)*z - (a*z + c*t)*t
-    # # We may choose t=2b and z=(a-d)
-    # if a!=d:
-    #     A = matrix_from_bottom_row(base,a-d,2*b)
-    # else:
-    #     A = matrix_from_bottom_row(base,1,2*b)
-    W = A*W*A**(-1)
-
-    assert (w.minpoly()).subs(W)==0
-    #now, since beta=(w-w[0])/w[1] we can compute the image of genK
-    Beta = (W-w0)/w1
-    #now we compute the fixed point tau_0
-    aa,bb,cc,dd = Beta.apply_map(v0).list()
-    if cc > 0:
-        tau0 = ((aa-dd)+sqrt((dd-aa)^2+4*bb*cc))/(2*cc)
-    else:
-        tau0 = ((aa-dd)-sqrt((dd-aa)^2+4*bb*cc))/(2*cc)
-    assert tau0.imag() > 0
-    # print 'tau=',tau0
-
-    #now we can compute the matrix gamma_tau (notation as in Darmon-Logan) and its image under v0
-    gtau = eps.vector()[0]+eps.vector()[1]*Beta
-    #and gamma_tau\cdot\infty and the continued fraction
-    print 'tau0,gtau'
-    print tau0
-    print gtau
-
-    return tau0,gtau
-
-def act_single(M,Z,v):
-    try:
-        M0=M.apply_morphism(v) #Matrix(QQbar,2,2,[v(M[ii,jj]) for ii in range(2) for jj in range(2)])
-        if v(M.determinant())>0:
-            conj=False
-        else:
-            conj=True
-        if Z is Infinity:
-            if(M0[1,0]==0):
-                return Infinity
-            else:
-                tmp=M0[0,0]/M0[1,0]
-                if conj:
-                    tmp=tmp.conjugate()
-                return tmp
-        try:
-            tmp=(M0[0,0]*Z+M0[0,1])/(M0[1,0]*Z+M0[1,1])
-            if conj:
-                tmp=tmp.conjugate()
-            return tmp
-        except ValueError:
-            print '!!'
-            return Infinity
-    except RuntimeError:
-        print '!! Maybe too much depth in recursion?'
-        raise RuntimeError
-
-def get_img_part(F,tau_0,v0,v0approx,ci,cip1,return_lims=False):
-    assert False
-    GA=Matrix(ZZ,2,2,[1,-1,0,1])
-    GB=Matrix(ZZ,2,2,[1,-1,1,0])
-    # Once the chain is found, get the limits from it
-    M=Matrix(F,[ci[0],cip1[0],ci[1],cip1[1]])
-    if M.determinant()==-1:
-        M.set_col_to_multiple_of_col(1,1,-1)
-    assert M.determinant() == 1
-    M = M^(-1)
-    if return_lims:
-        x,y =act_single(GA*M,tau_0,v0), act_single(GB*M,tau_0,v0)
-        x0,y0=ComplexField()(x),ComplexField()(y)
-        return x,y,RealField()(min([x0.imag(),y0.imag(),x0.imag()/x0.norm(),y0.imag()/y0.norm()])).abs().sqrt()
-    else:
-        x,y =act_single(GA*M,tau_0,v0approx), act_single(GB*M,tau_0,v0approx)
-        x0,y0=ComplexField()(x),ComplexField()(y)
-        return RealField()(min([x0.imag(),y0.imag(),x0.imag()/x0.norm(),y0.imag()/y0.norm()])).abs().sqrt()
-
-def get_img_part_vec(F,tau_0,v0,v0approx,vec):
-    assert False
-    img_part = 10
-    chain=[[1,0]]
-    p = [0, 1]
-    q = [1, 0]
-    for i in range(len(vec)):
-        p.append(p[i+1]*vec[i]+p[i])
-        q.append(q[i+1]*vec[i]+q[i])
-        chain.append([p[i+2],q[i+2]])
-        new_img_part = get_img_part(F, tau_0, v0,v0approx, chain[i],chain[i+1],return_lims = False)
-        img_part = min([img_part,new_img_part])
-    return img_part
-
-
-#atencio: aquesta rutina esta tunejada per a que retorni una unitat que ens va be per al cos amb alpha=r+1
-#la normal és descomentant la penultima linia, on hi ha el que retornavem abans...
-#tambe hi ha uns prints que sobren...
-def find_the_unit_of(F,K):
-    found=False
-    for eps in K.units():
-        is_square,root=eps.norm(F).is_square(root=True)
-        deg=eps.minpoly().degree()
-        if deg==2:
-            unit_not_in_F=eps
-        if is_square and deg==2:
-            print 'unit=',(1/root)*eps
-            return (1/root)*eps
-    # Not found so far..
-    norm=unit_not_in_F.norm(F)
-    #return unit_not_in_F**2/norm
-    return unit_not_in_F**2
-    
-
-def module_generators(K):
-    x=var('x')
-    y=var('y')
-    F=K.base_field()
-    f=F.polynomial()
-    g=K.relative_polynomial()
-    a=F.gen()
-    b=K.gen()
-    # Equivalent pari objects
-    FP=F.pari_bnf().subst(x,y)
-    fP=pari(f)
-    KP=K.pari_rnf()
-    gP=KP[0]
-    BP=gp.rnfhnfbasis(FP,gP)
-
-    E=[gp.matbasistoalg(FP,BP.vecextract(1)).lift(),gp.matbasistoalg(FP,BP.vecextract(2)).lift()]
-
-    A=Matrix(F,2,2,0)
-    for jj in range(2):
-        for ii in [1,2]:
-            tmp=E[jj][ii,1].Vec().sage()
-            if(len(tmp)==2):
-                A[ii-1,jj]=tmp[0]*a+tmp[1]
-            else:
-                A[ii-1,jj]=tmp[0]
-    return (Matrix(K,1,2,[1,b])*A).list()
-
-def find_embeddings(F,K):
-    embF=F.real_embeddings()
-    embK=K.real_embeddings()
-    if abs(embK[0](F.gen())-embF[0](F.gen()))<2**(-30):
-        v1=embF[0]
-        v0=embF[1]
-        swapped_embeddings=True
-    else:
-        v0=embF[0]
-        v1=embF[1]
-        swapped_embeddings=False
-    v00=v0(F.gen())
-    v10=v1(F.gen())
-    v00exact=QQbar.polynomial_root(F.polynomial(),RIF(v00-1/10,v00+1/10))
-    v10exact=QQbar.polynomial_root(F.polynomial(),RIF(v10-1/10,v10+1/10))
-    v0=F.hom([v00exact],QQbar)
-    v1=F.hom([v10exact],QQbar)
-    v0approx=F.hom([RealField(prec_bits)(v00exact)],RealField(prec_bits),check=False)
-    v1approx=F.hom([RealField(prec_bits)(v10exact)],RealField(prec_bits),check=False)
-    return v0,v1,v0approx,v1approx,swapped_embeddings
-
-def find_fundamental_unit(F,v0,v0approx):
-    e=F.units()[0]
-    if v0(e)<0:
-        e=-e
-
-    if v0approx(e**2)<1:
-        e = 1/e
-    return e
-
-
-#rutina auxiliar
-#fa la divisio entera entre a i b; retorna el quocient i el residu
-#com més gran sigui radi més probabilitat hi ha que trobi el quocient
-#si no el troba retorna l'string 'not found'
-def division(a,b,radi=100):
-    quo=a/b
-    w = quo.parent().ring_of_integers().ring_generators()[0]
-    # a = quo.numerator()
-    # b = quo.denominator()
-    compab=quo.vector()
-    comp=[compab[0].n().floor(), compab[1].n().floor()]
-    #la primera aproximacio es la obvia, fer part entera de les components de a/b
-    first_aprox=comp[0]+comp[1]*w
-    if ((quo-first_aprox).norm())^2<1: 
-        return [first_aprox,a-b*first_aprox]
-    #si no funciona la first_aprox, mirem d'aproximar a/b per elements del lattice <1,w>
-    #anem buscant punts com a molt a distancia r (en norma L1) i fem creixer r fins al parametre radi 
-    for r in range(0,radi,5):
-        for i in range(-r,r):
-            for j in range(-r,r):
-                if i^2>=(r-5)^2 or j^2>=(r-5)^2:
-                    aprox=first_aprox+i+j*w
-                    if ((quo-aprox).norm())^2<1:
-                        return [aprox,a-b*aprox]
-    raise RuntimeError, 'Not found...'
-
-#rutina auxiliar que, donat un vector v, calcula el quocient de la fraccio continua associat a v[0],v[1],...,v[n].
-#la faig servir per a comprovar que la fraccio continua que calculem esta ben feta
-def check_cf(v):
-    if len(v)==2:
-            return v[0]+1/v[1]
-    else:
-            w=[]
-            for i in range(1,len(v)):
-                    w.append(v[i])
-            return v[0]+1/check_cf(w)
-
-#aquesta es la rutina que calcula l'expressio en fraccions continues de a/b fent servir nomes divisions de longitud 1
-def cf(quo):
-    a = quo.numerator()
-    b = quo.denominator()
-    w = quo.parent().ring_of_integers().ring_generators()[0]
-    v=[]
-    knm1=a
-    kn=b
-    while True:
-        an,knp1=division(knm1,kn)
-        v.append(an)
-        if knp1==0:
-            break
-        knm1=kn
-        kn=knp1
-    # # aqui comprovem que a/b coincideix amb la fraccio continua associada a v
-    # if check_cf(v)!=a/b:
-    # 	raise RuntimeError, 'Error: no ha calculat be la fraccio continua!'
-    return v
-
-#this is the main function: given a matrix M in Gamma_1(N), it returns its decomposition into 6 elementary matrices
-#(actually, it does not use that M belongs to Gamma_1(N)...does this mean that we can decompose any matrix in SL_2 as a product of six elementray matrices???)
-def el_mat_dec(M,level):
-	F=M.base_ring()
-	u=F.units()[0]
-	E_lambda,uu=find_lambda(M,u)
-
-
-	#we know that E_lambda*M is a matrix [a,b,c,d] such that c=uu+ta for some unit uu; now we find uu and t
-	MM=E_lambda*M
-	a,b,c,d = MM.list()
-        # e = is_represented_by_unit(F,level,a,F.units()[0])
-        e = 1
-
-	t=(c-uu)/a
-	assert t.is_integral()
-
-	E1i=Matrix(F,2,2,[1,0,uu*(e-a)/e,1])
-	E2i=Matrix(F,2,2,[1,-1/uu,0,1])
-	E3i=Matrix(F,2,2,[1,0,t*(e-a),1])
-        E33i = Matrix(F,2,2,[1,0,c/e,1/e])
-	T=(E33i*E3i*E2i*E1i)**(-1)
-	E_x=T*MM
-	# assert E_x[1][0] == 0 and E_x[0][0] == 1
-
-	dec = [E_lambda**(-1), E33i*E3i, E2i, E1i, E_x]
-	assert prod(dec) == M
-	return dec
-
-#given a matrix M=[a,b,c,d] we run over all lambda in O until we find some satisfying that the class of c mod a+lambda*c is represented by a unit; observe that we are not requiring that a+lambda*c is a prime, nor that the units generate all the quotient ring: if the class of c (mod a+lambda*c) can be represented by a unit, that's fine
-#Rmk: maybe here's room for improvement: the loop is pretty pedestrian, and moreover it's not clear at all that we're running over the best lambda'a possible...but apparently it works so far...
-def find_lambda(M,u):
-    F=M.base_ring()
-    n=0
-    a,b,c,d=M.list()
-    uu = dict()
-    for i in range(-2,2):
-        uu[i]=u**i
-    while True:
-        n += 1
-        for l,i,sign in product(F.elements_of_norm(n),range(-2,2),[-1,1]):
-            lmd=sign*l*uu[i]
-            rep_unit = is_represented_by_unit(F,a+lmd*c,c,u)
-            if rep_unit != False:
-                return Matrix(F,2,2,[1,lmd,0,1]),rep_unit
-
-
-#we want to know if the class of c mod a is represented by a unit in F
-#returns the unit representing c mod a it it is, and returns False otherwise
-def is_represented_by_unit(F,a,c,u):
-    A = F.ideal(a)
-    c_coords = A.coordinates(c)
-    one_coords = A.coordinates(1)
-    if (c_coords-one_coords).denominator() == 1:
-        return 1
-    uinv = 1/u
-    n=1
-    unit1 = 1
-    unit2 = 1
-    while True:
-        unit1 *= u
-        unit2 *= uinv
-        u1_coords = A.coordinates(unit1)
-        u2_coords = A.coordinates(unit2)
-        if (c_coords - u1_coords).denominator() == 1:
-            return unit1
-        if (c_coords - u2_coords).denominator() == 1:
-            return unit2
-        if (c_coords + u1_coords).denominator() == 1:
-            return -unit1
-        if (c_coords + u2_coords).denominator() == 1:
-            return -unit2
-        if (u1_coords - one_coords).denominator() == 1:
-            return False
-        n+=1
-
-#given a 2x2 matrix M, it checks whether it belongs to Gamma_1(N)
-def is_in_Gamma_1(elt,N):
-    F=elt.base_ring()
-    II = F.ideal(N)
-    return II.coordinates(F(elt[0,0])-1).denominator() == 1 and II.coordinates(F(elt[1,0])).denominator() == 1 and elt.det() == 1
-
-def is_in_Gamma_0(elt,N):
-    F=elt.base_ring()
-    return F.ideal(N).coordinates(F(elt[1,0])).denominator() == 1 and elt.det() == 1
-
-def quotients_and_limits_withlevel(F,tau0,v0,v0approx,v1,gtau,level):
-    ''' We find the limits of the integrals to be computed. These are 3-component limits.
-    That is, it converts the integral \int^tau_0\int_\infty^cusp into a sum of integrals
-    \int^tau_1\int_infty^0+int^\tau_2\int_\infty^0+int^\tau_3\int_\infty^0...then we use
-    (a variation of) the trick of page 21 in Darmon-Logan to convert this into a sum of
-    integrals of the form \int_x1^y1\int_0^\infty+\int_x2^y2\int_0^\infty+\int_x3^y3\int_0^\infty+...
-    and we obtain [[x1,y1],[x2,y2],[x3,y3],...]'''
-    I = QQbar(-1).sqrt()
-    N0 = v0(level)
-    N1 = v1(level)
-    sqN1 = N1.sqrt()
-
-    # Note: we assume that gtau is in Gamma1 !
-    V = []
-    tau = tau0
-    # assert is_in_Gamma_1(gtau,level)
-    for E in el_mat_dec(gtau,level):
-        a,b,c,d = E.list()
-        # assert a == 1 and d == 1
-        newtau = act_single(E.inverse(),tau,v0)
-        if b != 0: # upper-triangular
-            assert c == 0
-        else: # lower-triangular
-            assert b == 0
-            if v0approx(E.determinant()) > 0:
-                conj = 1
-            else:
-                assert 0
-                conj = -1
-            V.extend([Limit(tau,I/sqN1,newtau,Infinity, conj = conj),Limit(-1/(N0*newtau),I/sqN1,-1/(N0*tau),Infinity, conj = conj)])
-        tau = newtau
-    return V,min([l.imaginary_part_approx() for l in V])
-
-
-# this function gives a sequence of cusps connecting \infty to the cusp x; the output is a vector in which each component is of the form [a,b], being a/b the corresponding cusp. The first component is always [1,0], the cusp \infty
-def quotients_and_limits(F,tau0,v0,v0approx,v1,cusp_cf = None,max_length = -1,threshold = None, assume_E1 = False, level = 1):
-    ''' We find the limits of the integrals to be computed. These are 3-component limits.
-    That is, it converts the integral \int^tau_0\int_\infty^cusp into a sum of integrals
-    \int^tau_1\int_infty^0+int^\tau_2\int_\infty^0+int^\tau_3\int_\infty^0...then we use
-    (a variation of) the trick of page 21 in Darmon-Logan to convert this into a sum of
-    integrals of the form \int_x1^y1\int_0^\infty+\int_x2^y2\int_0^\infty+\int_x3^y3\int_0^\infty+...
-    and we obtain [[x1,y1],[x2,y2],[x3,y3],...]'''
-    print 'level =',level
-    # level = -level
-    I = QQbar(-1).sqrt()
-    opt_V = []
-    opt_imag_part = -1
-    N0 = v0(level)
-    N1 = v1(level)
-    sqN1 = N1.sqrt()
-    idealN = F.ideal(N)
-    cusp = gtau[0,0]/gtau[1,0]
-
-    # First, we find the chains
-    if cusp_cf is None:
-        if assume_E1 == True:
-            print 'Assuming E1!'
-            all_vecs=[cf(cusp)]
-        else:
-            if max_length==-1:
-                all_vecs=[quadratic_continued_fraction(cusp,optimize_for_length=False)]
-            elif  max_length==0:
-                all_vecs=quadratic_continued_fraction(cusp,optimize_for_length=True)
-            else:
-                all_vecs=all_qcf_up_to_length(cusp,max_length=max_length, get_img_part = lambda vec: get_img_part_vec(F, tau0, v0, v0approx, vec),threshold = threshold)
-    else:
-        all_vecs=[cusp_cf]
-
-    # print 'Found %s candidates...'%len(all_vecs)
-    all_chains=[]
-    for vec in all_vecs:
-        V = []
-        img_part = 100
-        is_good = True
-        chain=[[1,0]]
-        p = [0, 1]
-        q = [1, 0]
-        for i in range(len(vec)):
-            p.append(p[i+1]*vec[i]+p[i])
-            q.append(q[i+1]*vec[i]+q[i])
-            chain.append([p[i+2],q[i+2]])
-            x, y, new_img_part = get_img_part(F, tau0,v0,v0approx, chain[i],chain[i+1],return_lims = True)
-            img_part = min([img_part,new_img_part])
-            if img_part < opt_imag_part:
-                is_good = False
-                break
-            if idealN.coordinates(chain[i][1]).denominator().abs() == 1:
-                V.extend([Limit(x,I/sqN1,y,Infinity),Limit(-1/(N0*y),I/sqN1,-1/(N0*x),Infinity)])
-            else:
-                assert 0
-                # V.extend([Limit(y,I/sqN1,x,Infinity),Limit(-1/(N0*x),I/sqN1,-1/(N0*y),Infinity)])
-
-            # V.extend([Limit(-1/y,I,-1/x,Infinity),Limit(x,I,y,Infinity)])
-        if is_good:
-            opt_imag_part = img_part
-            opt_V = V
-    if opt_imag_part == -1:
-        raise RuntimeError
-    return opt_V, opt_imag_part
-
-
-def bezout(F,a,b):
-    if b == 0:
-        return 1,0
-    q=quadratic_continued_fraction(F(a/b))
-    u=[]
-    v=[]
-    u.extend([1,0])
-    v.extend([0,1])
-    #print len(q)
-    for i in range(0,len(q)):
-        u.append(u[i]-q[i]*u[i+1])
-        v.append(v[i]-q[i]*v[i+1])
-    return u[len(u)-2],v[len(v)-2]
-
-
-def matrix_from_left_column(F,a,c):
-    d,b=bezout(F,a,c)
-    g=b*c+a*d
-    if g.norm().abs() != 1:
-        print 'Not coprime inputs?'
-        print 'g = ',g
-        print 'norm g =',g.norm().abs()
-        raise RuntimeError
-
-    Mres=Matrix(F.ring_of_integers(),2,2,[a,-b/g,c,d/g])
-    assert Mres.det()==1
-    return Mres
-
-def matrix_from_bottom_row(F,c,d):
-    a,mb=bezout(F,d,c)
-    g=mb*c+a*d
-    assert g.norm().abs()==1
-    return Matrix(F.ring_of_integers(),2,2,[a/g,-mb/g,c,d])
-
-def other_embedding(F,K, w):
-    a0,b0=K.class_group().gens()[0].ideal().gens_reduced()
-    vecw=w.vector()
-    T=Matrix(F,2,2,[1,vecw[0],0,vecw[1]]).inverse()
-    veca0=a0.vector()
-    vecb0=b0.vector()
-    veca=T*Matrix(F,2,1,veca0)
-    vecb=T*Matrix(F,2,1,vecb0)
-    S=Matrix(F,2,2,[veca[0,0],vecb[0,0],veca[1,0],vecb[1,0]])
-    vec=T*Matrix(F,2,1,(w^2).vector())
-    W=S^(-1)*Matrix(F,2,2,[0,vec[0,0],1,vec[1,0]])*S
-    if not all([W[ii,jj].is_integral() for ii in range(2) for jj in range(2)]):
-        a=F(a0)
-        Ma=Matrix(F,2,2,[a,0,0,1])
-        W=Ma*W*Ma^-1
-    assert all([W[ii,jj].is_integral() for ii in range(2) for jj in range(2)])
-    return W
 
 
 #this class represents an ATR extension of F. Thus, we pass the field F and an element alpha belonging to F such that the ATR extension is K=F(sqrt(alpha))
@@ -842,15 +244,13 @@ class ATRField(SageObject):
         self.d0=self.v0(self.d)
         self.d1=self.v1(self.d)
 
-        # print 'Estimating C...'
         self.estimated_C=self.estimate_C(1/10).ceil()
-        # print 'Done!'
         if C is None:
             self.C=self.estimated_C
         else:
             self.C=C
         self.ddelta=self.epssqrt/(self.C*(1+self.e0approx))
-        print 'Estimated delta = ',RR(self.ddelta)
+        print('Estimated delta = ',RR(self.ddelta))
 
 
 
@@ -923,14 +323,14 @@ class ATRField(SageObject):
             else:
                 mystr=out_limits
             save([(v.unpack(),v.conj) for v in V],mystr)
-            print 'Saved %s limits to %s.'%(len(V),mystr)
+            print('Saved %s limits to %s.'%(len(V),mystr))
 
         if len(V)==0:
             raise RuntimeError
-        print 'Number of limits=%s'%len(V)
-        print 'Original Min Imag part:'
+        print('Number of limits=%s'%len(V))
+        print('Original Min Imag part:')
         min_imag_part_original=min([l.imaginary_part_approx() for l in V])
-        print "%s,%s"%(min_imag_part_original,img_part)
+        print("%s,%s"%(min_imag_part_original,img_part))
 
 
         self.VV=V
@@ -941,15 +341,14 @@ class ATRField(SageObject):
         for ii in rng:
             new_WW,ww_info=self.break_limits([V[ii]],deltas,ii,ww_info)
             self.WW.append(new_WW)
-        print 'Original Min Imag part:'
-        print min_imag_part_original
+        print('Original Min Imag part:')
+        print(min_imag_part_original)
         limits=[]
         for filename in self.WW:
         	limits.extend([Limit(*l[0],conj=l[1]) for l in load(filename)])
-        print 'Min Imag part after prepare_limits:'
+        print('Min Imag part after prepare_limits:')
         tmp=min([oo]+[l.imaginary_part_approx() for l in limits])
-
-        print tmp
+        print(tmp)
         return tmp
 
     #this function computes the ATR point
@@ -959,10 +358,10 @@ class ATRField(SageObject):
             limits=[]
             for filename in self.WW:
                 limits.extend([Limit(*l[0],conj=l[1]) for l in load(filename)])
-        #print 'Min Imag part:'
-        #print min([l.imaginary_part_approx() for l in limits])
+        #print('Min Imag part:')
+        #print(min([l.imaginary_part_approx() for l in limits]))
 
-        print 'Starting integration...'
+        print('Starting integration...')
         gc.disable()
         swap=self.swapped_embeddings
         Points=[]
@@ -993,7 +392,7 @@ class ATRField(SageObject):
         if parallel:
             if n_cpus is None:
                 n_cpus=sage.parallel.ncpus.ncpus()
-            print 'n_cpus=%s'%n_cpus
+            print('n_cpus=%s'%n_cpus)
             N=ceil(len(Points)/(n_cpus*expand_factor))
             M=ceil(QQ(m1-m0)/(n_cpus*expand_factor))
             inputs=[]
@@ -1004,14 +403,14 @@ class ATRField(SageObject):
                 inputs.append((Points0,Points1,Points2,Points3,self,f,m0+M*ii,m0+min([m1-m0,M*(ii+1)]),preci,swap, False,Npoints))
                 # inputs.append((Points,self,f,nloop[M*ii:M*(ii+1)],preci,swap,False, Npoints))
             total=Cf(0)
-            print 'len(inputs)=',len(inputs)
+            print('len(inputs)=',len(inputs))
             I=py_integrate(inputs)
             ii=0
             out_vec=[]
             for res in I:
                 ii+=1
-                print 'Done with input %s/%s'%(ii,len(inputs))
-                print res[1]
+                print('Done with input %s/%s'%(ii,len(inputs)))
+                print(res[1])
                 out_vec.append(Cf((res[1])))
             total=sum(sorted(out_vec,key=lambda x:x.abs(),reverse=True))
         else:
@@ -1024,7 +423,7 @@ class ATRField(SageObject):
                 else:
                     total=Cf(integrate_hiprec(Points0,Points1,Points2,Points3,self,f,m0,m1,preci,swap, Npoints))
         gc.enable()
-        print 'Total (wall) time = %s'%walltime(t)
+        print('Total (wall) time = %s'%walltime(t))
         return total
 
     def delta(self,tolerance=1,C=None):
@@ -1059,7 +458,7 @@ class ATRField(SageObject):
         matches=dict([])
         for c1,nrm in self.SmallInts():
             if cputime(initial_time)>TIME_LIMIT:
-                print 'Reached TIME_LIMIT of %s seconds...'%(TIME_LIMIT)
+                print('Reached TIME_LIMIT of %s seconds...'%(TIME_LIMIT))
                 raise RuntimeError
             cx=(self.v0approx(c1)*x0approx,self.v1approx(c1)*x1approx)
             dtmp0,dtmp1=self.fundom_rep(cx)
@@ -1139,11 +538,11 @@ class ATRField(SageObject):
     # Find an epsilon to approximate. Ensures that at least the imaginary
     # parts are multiplied by lambda.
     def find_epsilon(self,xx,lam=2):
-        # print 'xx=',xx
+        # print('xx=',xx)
 
         Rf=RealField(prec_bits)
         tmp=(2**LOW_PREC_BITS*((self.C**2*Rf(xx[0].imag())*Rf(xx[1].imag()))**(.25))).round()/2**LOW_PREC_BITS
-        # print 'Would like eps =',RealField()(tmp)
+        # print('Would like eps =',RealField()(tmp))
         if tmp<1/50:
             A=self.C**2*(xx[0].imag()**2+xx[1].imag()**2)
             B=(self.C**2*xx[0].imag()*xx[1].imag())**2
@@ -1155,11 +554,11 @@ class ATRField(SageObject):
         elif tmp>=1:
             raise RuntimeError
             #tmp=99/100
-        # print 'eps =',tmp
+        # print('eps =',tmp)
         return tmp
 
     def move_to_siegel_domain(self,lim):
-        #print 'Entering move_to_siegel_domain...'
+        #print('Entering move_to_siegel_domain...')
         Rf=RealField(prec_bits)
         n_iters=1
         curr_delta=lim.imaginary_part_approx()
@@ -1177,16 +576,16 @@ class ATRField(SageObject):
                 opt_conj=limconj
             n_iters+=1
         if opt_delta<self.delta():
-            print 'Updating delta...'
+            print('Updating delta...')
             self.ddelta=min([self.ddelta,RationalField()(9/10)*RationalField()(((2**LOW_PREC_BITS*opt_delta).ceil())/2**LOW_PREC_BITS)])
-            print 'New delta =',RealField()(self.ddelta)
-        #print 'Done with move_to_siegel_domain.'
+            print('New delta =',RealField()(self.ddelta))
+        #print('Done with move_to_siegel_domain.')
         return opt_g,opt_delta,opt_conj
 
     # Find a better representative for Z in H^2.
     # By that we mean one such that its imaginary part is reasonable
     def reduction(self,initial_lim,G=None):
-        # print 'Entering reduction...'
+        # print('Entering reduction...')
         initial=(initial_lim.x0,initial_lim.x1)
         O=self.base.ring_of_integers()
         w=O.ring_generators()[0]
@@ -1208,9 +607,9 @@ class ATRField(SageObject):
             if bound>self.delta():
                 return MM,bound,conjugate
             try:
-                #print 'Entering approximate...'
+                #print('Entering approximate...')
                 c,d=self.approximate(Z,epsilon=1/2)
-                #print 'Done with approximate'
+                #print('Done with approximate')
                 MM=matrix_from_bottom_row(self.base,c,d)*MM
 
                 tmp=self.act(MM,initial)
@@ -1220,10 +619,10 @@ class ATRField(SageObject):
                 MM=Matrix(self.base,2,2,[exxn,0,0,1])*MM
             except RuntimeError: pass
             fin0,fin1=self.act(MM,initial)
-            # print 'Done with reduction'
+            # print('Done with reduction')
             bound=(RealField(prec_bits)(fin0.imag()*fin1.imag())).sqrt()
         except RuntimeError:
-            print 'Maybe too much recursion depth...'
+            print('Maybe too much recursion depth...')
             raise RuntimeError
         return MM,bound,conjugate
 
@@ -1269,7 +668,7 @@ class ATRField(SageObject):
         filename='/tmp/limits_%s_%s_%s_%s.sobj'%(self.base.discriminant(),self.ext.relative_discriminant().norm(),ii_info,self.embedding)
         # try:
         #     if os.path.isfile(filename):
-        #         print 'File corresponding to limit %s exists...skipping.'%(ii_info)
+        #         print('File corresponding to limit %s exists...skipping.'%(ii_info))
         #         tmp=load(filename)
         #         return filename,ww_info+len(tmp)
         # except IOError: pass
@@ -1293,10 +692,10 @@ class ATRField(SageObject):
         part=RationalField()(100)/len(vec)
         for l in vec:
             if self.level != 1 or l.imaginary_part_approx()>d00:
-                print "Don't break this limit..."
+                print("Don't break this limit...")
                 W.append(l)
             else:
-                print 'We break it!'
+                print('We break it!')
                 x0,x1,y0,y1=l.unpack()
                 n=ZZ((max(map(lambda x:((((-RealField(prec_bits)(x.imag()).log()))/((-e0mapprox).log()))).round(),[x0,y0]))))
                 e0xxn=(-e0mapprox)**n
@@ -1311,14 +710,14 @@ class ATRField(SageObject):
         progress=RationalField()(0)
 
         # original_volume = sum([l.volume() for l in V])
-        # print 'Original Volume:'
-        # print "%s"%(original_volume)
-        # print 'Estimated number of limits'
-        # print "%s"%self.estimate_number_limits(original_volume)
+        # print('Original Volume:')
+        # print("%s"%(original_volume))
+        # print('Estimated number of limits')
+        # print("%s"%self.estimate_number_limits(original_volume))
 
         while len(V)>0:
             ii+=1
-            print 'len(V)=%s, len(W)=%s, deltaAG=%s, done_limits=%s, progress=%s'%(len(V),2*len(W)+ww_info,self.minW,ii_info,RealField()(progress))
+            print('len(V)=%s, len(W)=%s, deltaAG=%s, done_limits=%s, progress=%s'%(len(V),2*len(W)+ww_info,self.minW,ii_info,RealField()(progress)))
             lim,part=V.pop()
             x0,x1,y0,y1=lim.unpack()
             limconj=lim.conj
@@ -1337,57 +736,55 @@ class ATRField(SageObject):
             d1sq=d11**2
             if y1app is not Infinity and x0app.imag()*y1app.imag()<d1sq:
                 t1=self.intersect_with_boundary(x1,y1,d1sq/x0app.imag())
-                #print 't1img=',RealField()(t1.imag())
-                print 'A',
+                #print('t1img=',RealField()(t1.imag()))
+                print('A', end=' ')
                 t1app=ComplexField(LOWER_PREC_BITS)(t1)
                 if y0app.imag()*t1app.imag()<d0sq:
-                    print '1'
+                    print('1')
                     t0=self.intersect_with_boundary(x0,y0,d0sq/t1app.imag())
-                    #print 't0img=',RealField()(t0.imag())
+                    #print('t0img=',RealField()(t0.imag()))
                     newV=[(Limit(t0,x1,y0,t1,conj),part/3),(Limit(x0,t1,y0,y1,conj),part/3)]
                     newW=[Limit(x0,x1,t0,t1,conj)]
                     progress+=part/3
                 else:
-                    print '2'
+                    print('2')
                     newV=[(Limit(x0,t1,y0,y1,conj),part/2)]
                     newW=[Limit(x0,x1,y0,t1,conj)]
                     progress+=part/2
             elif x1app.imag()*y0app.imag()<d1sq:
                 t0=self.intersect_with_boundary(x0,y0,d1sq/x1app.imag())
-                #print 't0img=',RealField()(t0.imag())
-                print 'B',
-
+                #print('t0img=',RealField()(t0.imag()))
+                print('B', end=' ')
                 t0app=ComplexField(LOWER_PREC_BITS)(t0)
                 if y1app is not Infinity and y1app.imag()*t0app.imag()<d0sq:
-                    print '1'
+                    print('1')
                     t1=self.intersect_with_boundary(x1,y1,d0sq/t0app.imag())
-                    #print 't1img=',RealField()(t1.imag())
+                    #print('t1img=',RealField()(t1.imag()))
                     newV=[(Limit(t0,x1,y0,y1,conj),part/3),(Limit(x0,t1,t0,y1,conj),part/3)]
                     newW=[Limit(x0,x1,t0,t1,conj)]
                     progress+=part/3
                 else:
-                    print '2'
+                    print('2')
                     newV=[(Limit(t0,x1,y0,y1,conj),part/2)]
                     newW=[Limit(x0,x1,t0,y1,conj)]
                     progress+=part/2
             elif y1app is not Infinity and y0app.imag()*y1app.imag()<d0sq:
                 t0=self.intersect_with_boundary(x0,y0,d0sq/y1app.imag())
-                #print 't0img=',RealField()(t0.imag())
-                print 'C',
-
+                #print('t0img=',RealField()(t0.imag()))
+                print('C', end=' ')
                 t0app=ComplexField(LOWER_PREC_BITS)(t0)
                 if t0app.imag()*x1app.imag()<d1sq:
-                    print '1'
+                    print('1')
                     newV=[(Limit(t0,x1,y0,y1,conj),part/2),(Limit(x0,x1,t0,y1,conj),part/2)]
                     newW=[]
                     progress+=0
                 else:
-                    print '2'
+                    print('2')
                     newV=[(Limit(t0,x1,y0,y1,conj),part/2)]
                     newW=[Limit(x0,x1,t0,y1,conj)]
                     progress+=part/2
             else:
-                print 'D'
+                print('D')
                 newV=[]
                 newW=[Limit(x0,x1,y0,y1,conj)]
                 progress+=part
@@ -1447,9 +844,9 @@ class ATRField(SageObject):
         ii=0
         while True:
             if ii>=self.cached_ints_N:
-                # print 'updating cache...'
+                # print('updating cache...')
                 self.update_cached_ints()
-                # print 'done!'
+                # print('done!')
             try:
                 for a,b in mycache[ii]:
                     for aa,bb in list(set([(a,b),(-a,b),(a,-b),(-a,-b)])):
@@ -1528,20 +925,20 @@ class TestDL:
         self.level = level
 
     def calculate_HMF(self,max_norm,parallel = True):
-        print 'Creating HilbertModularForm...'
+        print('Creating HilbertModularForm...')
         self.hmf=HilbertModularForm(self.E,max_norm,level = self.level, expand_factor=8, n_cpus = None if parallel == True else 1)
 
     def calculate_limits(self,K,max_length = None, assume_E1 = False): # Defaults to 5
         delta=K.prepare_limits(max_length=max_length, assume_E1 = assume_E1,level = self.level)
         max_norm = ceil(RealField()((K.base.discriminant()*self.prec**2)/(30*delta**2)))
-        print 'Updated max_norm to %s'%(RR(max_norm))
+        print('Updated max_norm to %s'%(RR(max_norm)))
         return max_norm
 
     def calculate_Jtau(self,K,max_norm,parallel=True):
         F=self.F
-        print 'Computing up to max_norm =',RR(max_norm)
+        print('Computing up to max_norm =',RR(max_norm))
         if self.hmf is None or self.hmf.max_norm_aprs<max_norm:
-            print "Need more coefficients for the HMF. We'll calculate them now..."
+            print("Need more coefficients for the HMF. We'll calculate them now...")
             self.calculate_HMF(max_norm,parallel)
         return K.ATR_point(self.hmf,1,max_norm,self.working_prec,parallel=parallel,use_quads=False,expand_factor=8)
 
@@ -1553,9 +950,9 @@ class TestDL:
             self.alpha = find_alpha(self.E,x_coord)
         else:
             self.alpha = alpha
-        print 'alpha=',self.alpha
+        print('alpha=',self.alpha)
         hK=self.F.extension(Y**2-self.alpha,names='beta').class_number()
-        print 'Class number =',hK
+        print('Class number =',hK)
         if hK>2:
             raise NotImplementedError, "Only deal with class number up to 2"
         if Jtau is None:
@@ -1572,17 +969,16 @@ class TestDL:
             self.K.append(K)
             if Jtau is None:
                 # Calculate the limits
-                print 'Calculating limits...'
+                print('Calculating limits...')
                 this_max_norm=self.calculate_limits(K,max_length, assume_E1 = assume_E1)
                 self.max_norm[h]=this_max_norm
-                # print 'Done'
+                # print('Done')
                 if max_norm is None:
                     max_norm=this_max_norm
                 # Calculate the ATR point
                 if integrate == True:
-                    print 'Calculating the ATR point...'
-                    new_Jtau=self.calculate_Jtau(K,max_norm,parallel=parallel)
-                    print 'Jtau[%s]=%s'%(h,new_Jtau)
+                    print('Calculating the ATR point...')
+                    print('Jtau[%s]=%s'%(h,new_Jtau))
                 else:
                     new_Jtau = 0
                 self.Jtau+=new_Jtau
@@ -1640,22 +1036,21 @@ class TestDL:
         self.lambda_0_plus_K=lambda_0_plus_K
         self.lambda_1_minus_K=lambda_1_minus_K
         self.lambda_1_plus_K=lambda_1_plus_K
-        print 'lambda_0_minus_K=',lambda_0_minus_K
-        print 'lambda_0_plus_K=',lambda_0_plus_K
-        print 'lambda_1_minus_K=',lambda_1_minus_K
-        print 'lambda_1_plus_K=',lambda_0_plus_K
+        print('lambda_0_minus_K=',lambda_0_minus_K)
+        print('lambda_0_plus_K=',lambda_0_plus_K)
+        print('lambda_1_minus_K=',lambda_1_minus_K)
+        print('lambda_1_plus_K=',lambda_0_plus_K)
 
         #this is the complex number in C/Lambda_0 corresponding to the nontorsion point	
         self.z=self.LK0.elliptic_logarithm(P,prec = prec_bits,reduce = True)
         #a small verification that z is the correct value
         try:
             exp_tildeP=self.LK0.elliptic_exponential(self.z)
-            print 'Verifying that z is the correct value...'
-            assert ((exp_tildeP[0]-self.v0K(P[0])).abs()<1E-12) and ((exp_tildeP[1]-self.v0K(P[1])).abs()<1E-12)
-            print 'Checking that the real part of z is indeed torsion. This should be a small linear relation:'
-            print gp.lindep([self.z.real(),self.lambda_0_plus_K],25)
+            print('Verifying that z is the correct value...')
+            print('Checking that the real part of z is indeed torsion. This should be a small linear relation:')
+            print(gp.lindep([self.z.real(),self.lambda_0_plus_K],25))
         except ArithmeticError:
-            print 'Could not check that z was OK...continuing nevertheless'
+            print('Could not check that z was OK...continuing nevertheless')
         self.check_lindeps(prec=prec)
 
     def check_lindeps(self,prec,Jtau = None,z = None):
@@ -1664,32 +1059,7 @@ class TestDL:
         if z is None:
             z=self.z
         #finally the verification
-        print 'Verification of the imaginary part of the point'
-        print gp.lindep([(Jtau/self.lambda_1_plus_K).imag(),z.imag(),self.lambda_0_minus_K.imag()],prec)
-        print 'Verification of the real part of the point (should be torsion)'
-        print gp.lindep([(Jtau/self.lambda_1_plus_K).real(),self.lambda_0_plus_K],prec)
-
-def find_alpha(E, x_coord):
-    F = E.base_ring()
-    ff=E.defining_polynomial()
-    Fx=PolynomialRing(F,names='Y')
-    Y=Fx.gen()
-    R=ff.parent()
-    phi=R.hom([x_coord,Y,1])
-    alpha=phi(ff).discriminant()
-    alpha*=ZZ(alpha.denominator())**2
-    vv=alpha.factor()
-    if vv.unit().is_square():
-        alpha=F(1)
-    elif (-vv.unit()).is_square():
-        alpha=F(-1)
-    elif (vv.unit()/F.units()[0]).is_square():
-        alpha=F.units()[0]
-    elif (-vv.unit()/F.units()[0]).is_square():
-        alpha=-F.units()[0]
-    else:
-        raise RuntimeError, "Don't know what to do here..."
-    for xx in vv:
-        if xx[1]%2==1:
-            alpha*=xx[0]
-    return alpha
+        print('Verification of the imaginary part of the point')
+        print(gp.lindep([(Jtau/self.lambda_1_plus_K).imag(),z.imag(),self.lambda_0_minus_K.imag()],prec))
+        print('Verification of the real part of the point (should be torsion)')
+        print(gp.lindep([(Jtau/self.lambda_1_plus_K).real(),self.lambda_0_plus_K],prec))

@@ -233,7 +233,7 @@ def integrate_doubles(Points0,Points1,Points2,Points3,atrfield,hmf,long int m0,l
     v0,v1,e2=hmf.v0,hmf.v1,hmf.e2
  
     D=atrfield.base.discriminant()
-    # print 'Integrating %d points...'%(Npoints)
+    # print('Integrating %d points...'%(Npoints))
     cdef double prec=powl(2.0,-preci)
     assert(preci==53)
     Cf,Rf=CDF,RDF
@@ -347,10 +347,10 @@ def integrate_doubles(Points0,Points1,Points2,Points3,atrfield,hmf,long int m0,l
 
 
 def integrate_hiprec(Points0,Points1,Points2,Points3,atrfield,hmf,long int m0,long int m1,int preci,int swap,unsigned long Npoints):
-    # print 'Integrating in high precision!'
+    # print('Integrating in high precision!')
     v0,v1,e2=hmf.v0,hmf.v1,hmf.e2
     D=atrfield.base.discriminant()
-    # print 'Integrating %d points...'%(Npoints)
+    # print('Integrating %d points...'%(Npoints))
     Cf,Rf=ComplexField(2*preci),RealField(2*preci)
     prec=Rf(2)**(-preci)
 
@@ -383,8 +383,8 @@ def integrate_hiprec(Points0,Points1,Points2,Points3,atrfield,hmf,long int m0,lo
     sig_on()
     for m in range(m1-1,m0-1,-1):
         # if m%100==0:
-        #     print threshold
-        #     print m
+        #     print(threshold)
+        #     print(m)
         if m == 24389:
             continue
         minv = 1/Rf(m)
@@ -452,7 +452,7 @@ def integrate_hiprec(Points0,Points1,Points2,Points3,atrfield,hmf,long int m0,lo
                     newval+=newval0
                 else:
                     newval-=newval0
-            #print m,-newval.abs().log()
+            #print(m,-newval.abs().log())
             val+=aMoverm*newval
     sig_off()
     return val*Dsqrt
