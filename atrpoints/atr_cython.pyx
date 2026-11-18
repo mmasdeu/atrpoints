@@ -1,3 +1,4 @@
+# cython: language_level=3
 from sage.rings.all import RealField, ComplexField, CDF, RDF, ZZ, Infinity
 from sage.arith.misc import next_prime, kronecker_symbol
 from sage.schemes.elliptic_curves.all import EllipticCurve
@@ -409,7 +410,9 @@ def integrate_doubles(Points0,Points1,Points2,Points3,atrfield,hmf,long int m0,l
     if e02normalized<1:
         e02normalized=1.0/e02normalized
     e02normalized_inv=1.0/e02normalized
-    cdef long double n0,n1,e02ii,e02to[50],e02toinv[50]
+    cdef long double n0,n1,e02ii
+    cdef long double e02to[50]
+    cdef long double e02toinv[50]
     cdef long double complex z0,z1,r0,r1,r0z0,r1z1,twopiI_overd0,twopiI_overd1
     e02ii=1
     for ii in range(50):
@@ -430,7 +433,7 @@ def integrate_doubles(Points0,Points1,Points2,Points3,atrfield,hmf,long int m0,l
             if len(ff)>1:
                 m1=ff[len(ff)-1][0]
                 if m1>=hmf.small_norm: # This should happen most of the time
-                    m0=m/m1
+                    m0=m//m1
                     if kronecker_symbol(D,m1)==-1: continue
                     II=[equalize_pair(data1,data2,v0,v1,e2) for data1 in hmf.ans_small[m0] for data2 in hmf.aprs_large[bisect_left(hmf.large_primes,m1)]]
                 else:

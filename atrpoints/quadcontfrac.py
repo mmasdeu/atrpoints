@@ -12,6 +12,7 @@ from sage.structure.sage_object import SageObject
 from sage.functions.all import (floor,ceil)
 from sage.rings.all import IntegerRing
 from sage.rings.all import RationalField
+import sys
 from collections import deque
 from collections import namedtuple
 from sage.plot import plot

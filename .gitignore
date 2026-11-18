@@ -1,0 +1,13 @@
+# Python byte compiled files
+*.pyc
+__pycache__/
+
+# Sage preparsed scripts
+*.sage.py
+
+# Build artifacts
+/build
+/dist
+/*.egg-info
+/atrpoints/*.c
+/atrpoints/*.so

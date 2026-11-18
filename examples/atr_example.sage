@@ -5,7 +5,7 @@ The file that runs the tests
 from sage.parallel.all import fork
 from itertools import product
 from operator import itemgetter, attrgetter
-from atrpoints import *
+from atrpoints.atrpoints import *
 sys.setrecursionlimit(10**7)
 
 F.<r>=QuadraticField(29)

@@ -1,20 +1,34 @@
-prec_bits=2000
-TIME_LIMIT=10
-LOW_PREC_BITS=300
-LOWER_PREC_BITS=100
-from itertools import islice,product
-from sage.misc.cachefunc import disk_cached_function
-import pickle
-from sage.parallel.all import fork
+r"""
+ATR points on elliptic curves over real quadratic fields (level 1).
+
+Numerical computation of the ATR points of Darmon, following Darmon-Logan and
+Guitart-Masdeu: Fourier coefficients of the Hilbert modular form, limits of the
+integrals (via quadratic continued fractions) and the integration itself (in
+:mod:`atrpoints.atr_cython`). The main entry point is :class:`TestDL`.
+"""
 import gc
+import pickle
+import sys
 from array import array
 from bisect import bisect_left
-NCPUS=sage.parallel.ncpus.ncpus()
-from sage.parallel.all import fork
-sys.setrecursionlimit(10**7)
-from quadcontfrac.sage import *
 
-#load 'atr_cython.spyx'
+from sage.all import *
+from itertools import islice, product  # after sage.all: itertools.product, not Sage's product
+from sage.misc.cachefunc import disk_cached_function
+from sage.parallel.all import fork, parallel
+from sage.parallel.ncpus import ncpus
+
+from .atr_cython import *
+from .quadcontfrac import *
+from .utility import find_alpha, get_memory_usage, module_generators
+
+prec_bits = 2000
+TIME_LIMIT = 10
+LOW_PREC_BITS = 300
+LOWER_PREC_BITS = 100
+NCPUS = ncpus()
+sys.setrecursionlimit(10**7)
+
 
 class Limit(SageObject):
     def __init__(self,x0,x1,y0,y1,conj=1):
@@ -41,9 +55,9 @@ class Limit(SageObject):
     def __str__(self):
         return str(self.unpack())
     def x(self):
-        return (x0,x1)
+        return (self.x0,self.x1)
     def y(self):
-        return (y0,y1)
+        return (self.y0,self.y1)
     def sw(self):
         return self.x0
     def se(self):
@@ -67,13 +81,13 @@ class HilbertModularForm(SageObject):
             self.E=E
             self.F=self.E.base_field()
             self.D=self.F.disc()
-            assert(2**valuation(expand_factor,2)==expand_factor)
+            assert(ZZ(2)**valuation(expand_factor,2)==expand_factor)
             self.aprs=dict({ZZ(1):[[(1,1,1)]]})
             self.init_embeddings()
             if n_cpus is None:
-                n_cpus=sage.parallel.ncpus.ncpus()
+                n_cpus=ncpus()
             print('n_cpus=%s'%n_cpus)
-            assert(2**valuation(n_cpus,2)==n_cpus)
+            assert(ZZ(2)**valuation(n_cpus,2)==n_cpus)
             M=n_cpus*expand_factor
             congN=2*M
             pari.init_primes(2*max_norm_aprs)
@@ -95,7 +109,7 @@ class HilbertModularForm(SageObject):
             self.v0=v0
             self.v1=v1
             if v0(e2).abs()<1:
-                e2=1/e2
+                e2=ZZ(1)/e2
             print('M=',M)
             # inputs=[(self,max_norm_aprs,congN,1,[2])]+[(self,max_norm_aprs,congN,a%congN,[]) for a in range(3,congN,2)]
             print('Computing data for small primes... (up to %s)'%self.small_norm)
@@ -116,7 +130,7 @@ class HilbertModularForm(SageObject):
                         newvec.append(get_all_combinations_small(self,ff,newdict))
 
             self.aprs_small=newdict
-            large_primes=filter(lambda xx:kronecker_symbol(self.F.discriminant(),xx)!=-1,prime_range(self.small_norm,max_norm_aprs))
+            large_primes=[xx for xx in prime_range(self.small_norm,max_norm_aprs) if kronecker_symbol(self.F.discriminant(),xx)!=-1]
             if large_prime_data is None:
                 print('Starting the massive computation now...')
                 #large_primes=[xx for xx in prime_range(self.small_norm,max_norm_aprs) if kronecker_symbol(self.F.discriminant(),xx)!=-1]
@@ -161,8 +175,8 @@ class HilbertModularForm(SageObject):
         v10=v1(self.F.gen())
         self.v00=v0
         self.v10=v1
-        v00exact=QQbar.polynomial_root(self.F.polynomial(),RIF(v00-1/10,v00+1/10))
-        v10exact=QQbar.polynomial_root(self.F.polynomial(),RIF(v10-1/10,v10+1/10))
+        v00exact=QQbar.polynomial_root(self.F.polynomial(),RIF(v00-ZZ(1)/10,v00+ZZ(1)/10))
+        v10exact=QQbar.polynomial_root(self.F.polynomial(),RIF(v10-ZZ(1)/10,v10+ZZ(1)/10))
         self.v0approx=self.F.hom([RealField(prec_bits)(v00exact)],RealField(prec_bits),check=False)
         self.v1approx=self.F.hom([RealField(prec_bits)(v10exact)],RealField(prec_bits),check=False)
 
@@ -193,15 +207,15 @@ def tau0_and_cusp(base, ext, w, eps, e, v0, v1, embedding, extra_parameters = No
     #we need two base change matrices
     w0,w1 = w.vector()
     BW=Matrix(base,[[1,w0],[0,w1]])
-    WB=BW^-1
+    WB=BW**-1
     #first, the image of w, the generator of O_K as O_F-module
-    w2_base_W=WB*(w^2).vector()
+    w2_base_W=WB*(w**2).vector()
     #Construct the matrix of multiplication by w in the basis [1,w]
     W=Matrix(base,[[0,w2_base_W[0]],[1,w2_base_W[1]]])
 
     if embedding == 1:
         S = Matrix(base,2,2,[-e,0,0,1])
-        W=S^(-1)*W*S
+        W=S**(-1)*W*S
         #W = other_embedding(base,ext,w)
 
     # Modify the matrix hoping for better imaginary parts
@@ -222,9 +236,9 @@ def tau0_and_cusp(base, ext, w, eps, e, v0, v1, embedding, extra_parameters = No
     #now we compute the fixed point tau_0
     aa=v0(Beta[0][0]);bb=v0(Beta[0][1]);cc=v0(Beta[1][0]);dd=v0(Beta[1][1])
     if cc > 0:
-        tau0 = ((aa-dd)+sqrt((dd-aa)^2+4*bb*cc))/(2*cc)
+        tau0 = ((aa-dd)+sqrt((dd-aa)**2+4*bb*cc))/(2*cc)
     else:
-        tau0 = ((aa-dd)-sqrt((dd-aa)^2+4*bb*cc))/(2*cc)
+        tau0 = ((aa-dd)-sqrt((dd-aa)**2+4*bb*cc))/(2*cc)
     assert tau0.imag() > 0
     # print('tau=',tau0)
 
@@ -269,7 +283,7 @@ def get_img_part(F,tau_0,v0,v0approx,ci,cip1,return_lims=False):
     if M.determinant()==-1:
         M.set_col_to_multiple_of_col(1,1,-1)
     assert M.determinant() == 1
-    M = M^(-1)
+    M = M**(-1)
     if return_lims:
         x,y =act_single(GA*M,tau_0,v0), act_single(GB*M,tau_0,v0)
         x0,y0=ComplexField()(x),ComplexField()(y)
@@ -303,40 +317,12 @@ def find_the_unit_of(F,K):
             return eps/root
     # Not found so far..
     norm=unit_not_in_F.norm(F)
-    return unit_not_in_F**2/norm
-
-def module_generators(K):
-    x=var('x')
-    y=var('y')
-    F=K.base_field()
-    f=F.polynomial()
-    g=K.relative_polynomial()
-    a=F.gen()
-    b=K.gen()
-
-    # Equivalent pari objects
-    FP=F.pari_bnf().subst(x,y)
-    fP=pari(f)
-    KP=K.pari_rnf()
-    gP=KP[0]
-    BP=gp.rnfhnfbasis(FP,gP)
-
-    E=[gp.matbasistoalg(FP,BP.vecextract(1)).lift(),gp.matbasistoalg(FP,BP.vecextract(2)).lift()]
-
-    A=Matrix(F,2,2,0)
-    for jj in range(2):
-        for ii in [1,2]:
-            tmp=E[jj][ii,1].Vec().sage()
-            if(len(tmp)==2):
-                A[ii-1,jj]=tmp[0]*a+tmp[1]
-            else:
-                A[ii-1,jj]=tmp[0]
-    return (Matrix(K,1,2,[1,b])*A).list()
+    return unit_not_in_F**ZZ(2)/norm
 
 def find_embeddings(F,K):
     embF=F.real_embeddings()
     embK=K.real_embeddings()
-    if abs(embK[0](F.gen())-embF[0](F.gen()))<2**(-30):
+    if abs(embK[0](F.gen())-embF[0](F.gen()))<ZZ(2)**(-30):
         v1=embF[0]
         v0=embF[1]
         swapped_embeddings=True
@@ -346,8 +332,8 @@ def find_embeddings(F,K):
         swapped_embeddings=False
     v00=v0(F.gen())
     v10=v1(F.gen())
-    v00exact=QQbar.polynomial_root(F.polynomial(),RIF(v00-1/10,v00+1/10))
-    v10exact=QQbar.polynomial_root(F.polynomial(),RIF(v10-1/10,v10+1/10))
+    v00exact=QQbar.polynomial_root(F.polynomial(),RIF(v00-ZZ(1)/10,v00+ZZ(1)/10))
+    v10exact=QQbar.polynomial_root(F.polynomial(),RIF(v10-ZZ(1)/10,v10+ZZ(1)/10))
     v0=F.hom([v00exact],QQbar)
     v1=F.hom([v10exact],QQbar)
     v0approx=F.hom([RealField(prec_bits)(v00exact)],RealField(prec_bits),check=False)
@@ -360,7 +346,7 @@ def find_fundamental_unit(F,v0,v0approx):
         e=-e
 
     if v0approx(e**2)<1:
-        e = 1/e
+        e = ZZ(1)/e
     return e
 
 
@@ -377,29 +363,29 @@ def division(a,b,radi=100):
     comp=[compab[0].n().floor(), compab[1].n().floor()]
     #la primera aproximacio es la obvia, fer part entera de les components de a/b
     first_aprox=comp[0]+comp[1]*w
-    if ((quo-first_aprox).norm())^2<1: 
+    if ((quo-first_aprox).norm())**2<1: 
         return [first_aprox,a-b*first_aprox]
     #si no funciona la first_aprox, mirem d'aproximar a/b per elements del lattice <1,w>
     #anem buscant punts com a molt a distancia r (en norma L1) i fem creixer r fins al parametre radi 
     for r in range(0,radi,5):
         for i in range(-r,r):
             for j in range(-r,r):
-                if i^2>=(r-5)^2 or j^2>=(r-5)^2:
+                if i**2>=(r-5)**2 or j**2>=(r-5)**2:
                     aprox=first_aprox+i+j*w
-                    if ((quo-aprox).norm())^2<1:
+                    if ((quo-aprox).norm())**2<1:
                         return [aprox,a-b*aprox]
-    raise RuntimeError, 'Not found...'
+    raise RuntimeError('Not found...')
 
 #rutina auxiliar que, donat un vector v, calcula el quocient de la fraccio continua associat a v[0],v[1],...,v[n].
 #la faig servir per a comprovar que la fraccio continua que calculem esta ben feta
 def check_cf(v):
     if len(v)==2:
-            return v[0]+1/v[1]
+            return v[0]+ZZ(1)/v[1]
     else:
             w=[]
             for i in range(1,len(v)):
                     w.append(v[i])
-            return v[0]+1/check_cf(w)
+            return v[0]+ZZ(1)/check_cf(w)
 
 #aquesta es la rutina que calcula l'expressio en fraccions continues de a/b fent servir nomes divisions de longitud 1
 def cf(quo):
@@ -418,12 +404,12 @@ def cf(quo):
         kn=knp1
     # # aqui comprovem que a/b coincideix amb la fraccio continua associada a v
     # if check_cf(v)!=a/b:
-    # 	raise RuntimeError, 'Error: no ha calculat be la fraccio continua!'
+    #   raise RuntimeError, 'Error: no ha calculat be la fraccio continua!'
     return v
 
 # this function gives a sequence of cusps connecting \infty to the cusp x; the output is a vector in which each component is of the form [a,b], being a/b the corresponding cusp. The first component is always [1,0], the cusp \infty
 def quotients_and_limits(F,tau0,v0,v0approx,cusp,cusp_cf = None,max_length = -1,threshold = None, assume_E1 = False):
-    ''' We find the limits of the integrals to be computed. These are 3-component limits.
+    r''' We find the limits of the integrals to be computed. These are 3-component limits.
     That is, it converts the integral \int^tau_0\int_\infty^cusp into a sum of integrals
     \int^tau_1\int_infty^0+int^\tau_2\int_\infty^0+int^\tau_3\int_\infty^0...then we use
     (a variation of) the trick of page 21 in Darmon-Logan to convert this into a sum of
@@ -466,7 +452,7 @@ def quotients_and_limits(F,tau0,v0,v0approx,cusp,cusp_cf = None,max_length = -1,
             if img_part < opt_imag_part:
                 is_good = False
                 break
-            V.extend([Limit(-1/y,I,-1/x,Infinity),Limit(x,I,y,Infinity)])
+            V.extend([Limit(-ZZ(1)/y,I,-ZZ(1)/x,Infinity),Limit(x,I,y,Infinity)])
         if is_good:
             opt_imag_part = img_part
             opt_V = V
@@ -503,12 +489,12 @@ def other_embedding(F,K, w):
     veca=T*Matrix(F,2,1,veca0)
     vecb=T*Matrix(F,2,1,vecb0)
     S=Matrix(F,2,2,[veca[0,0],vecb[0,0],veca[1,0],vecb[1,0]])
-    vec=T*Matrix(F,2,1,(w^2).vector())
-    W=S^(-1)*Matrix(F,2,2,[0,vec[0,0],1,vec[1,0]])*S
+    vec=T*Matrix(F,2,1,(w**2).vector())
+    W=S**(-1)*Matrix(F,2,2,[0,vec[0,0],1,vec[1,0]])*S
     if not all([W[ii,jj].is_integral() for ii in range(2) for jj in range(2)]):
         a=F(a0)
         Ma=Matrix(F,2,2,[a,0,0,1])
-        W=Ma*W*Ma^-1
+        W=Ma*W*Ma**-1
     assert all([W[ii,jj].is_integral() for ii in range(2) for jj in range(2)])
     return W
 
@@ -525,15 +511,16 @@ class ATRField(SageObject):
         self.genF=self.base.gen()
         self.alpha=alpha
         if not self.is_ATR():
-            raise ValueError,'Error: the extension is not ATR'
-        Q.<y>=PolynomialRing(F)
+            raise ValueError('Error: the extension is not ATR')
+        Q = PolynomialRing(F, names='y')
+        y = Q.gen()
         #ext is the field extension K, with generator beta
-        self.ext=F.extension(y^2-alpha,'beta')
+        self.ext=F.extension(y**2-alpha,'beta')
         #genK is sqrt(alpha), and w is the generator of O_K as O_F-module
         w=module_generators(self.ext)[1]
         assert w.is_integral()
 
-       	#we create the embeddings v0,v1 of F, so that v0 extends to a complex embedding of K and v1 extends to a real embedding of K
+        #we create the embeddings v0,v1 of F, so that v0 extends to a complex embedding of K and v1 extends to a real embedding of K
         self.v0,self.v1,self.v0approx,self.v1approx,self.swapped_embeddings = find_embeddings(F,self.ext)
         self.eps = find_the_unit_of(self.base,self.ext)
 
@@ -543,7 +530,7 @@ class ATRField(SageObject):
 
         self.e0=self.v0(self.e)
         self.e0approx=self.v0approx(self.e)
-        self.epssqrt=((RealField(prec_bits)(2**LOW_PREC_BITS*self.e0approx.sqrt())).round())/2**LOW_PREC_BITS
+        self.epssqrt=((RealField(prec_bits)(ZZ(2)**LOW_PREC_BITS*self.e0approx.sqrt())).round())/ZZ(2)**LOW_PREC_BITS
         self.e1=self.v1(self.e)
         #this is a unit of K (we have to check that it is not the fundamental unit of F)
 
@@ -568,7 +555,7 @@ class ATRField(SageObject):
         self.d1=self.v1(self.d)
 
         # print('Estimating C...')
-        self.estimated_C=self.estimate_C(1/10).ceil()
+        self.estimated_C=self.estimate_C(ZZ(1)/10).ceil()
         # print('Done!')
         if C is None:
             self.C=self.estimated_C
@@ -587,17 +574,18 @@ class ATRField(SageObject):
         F=self.base
         if alpha is None:
             alpha=self.alpha
-        Q.<y>=PolynomialRing(F)
+        Q = PolynomialRing(F, names='y')
+        y = Q.gen()
         y=Q.gen()
-        if not (y^2-alpha).is_irreducible():
+        if not (y**2-alpha).is_irreducible():
             return False
-        K=NumberField(y^2-alpha,'beta')
+        K=NumberField(y**2-alpha,'beta')
         if len(K.real_embeddings())==2:
             return True
         return False
 
     def estimate_number_limits(self, original_volume):
-        return ZZ((original_volume/(acosh(RR(1+1/(200*.9*.9)))**2)).ceil())
+        return ZZ((original_volume/(acosh(RR(1+ZZ(1)/(200*RealNumber('.9')*RealNumber('.9'))))**2)).ceil())
 
     def prepare_limits(self,deltas=None,lims_from_disk=None,rng=None,out_limits=None,cusp_cf=None,max_length = 0,threshold = None, assume_E1 = False):
         V=None
@@ -610,7 +598,7 @@ class ATRField(SageObject):
             except IOError: pass
         if V is None:
             if threshold is None:
-                threshold = 10**(-3)
+                threshold = ZZ(10)**(-3)
             V,img_part = quotients_and_limits(self.base, self.tau_0, self.v0, self.v0approx, self.cusp,cusp_cf, max_length,threshold,assume_E1)
             if out_limits is None:
                 mystr='/tmp/limits_initial_%s_%s.sobj'%(self.base.discriminant(),self.ext.relative_discriminant().norm())
@@ -630,7 +618,7 @@ class ATRField(SageObject):
         self.VV=V
         self.WW=[]
         if rng is None:
-            rng=range(len(V))
+            rng=list(range(len(V)))
         ww_info=0
         for ii in rng:
             new_WW,ww_info=self.break_limits([V[ii]],deltas,ii,ww_info)
@@ -639,7 +627,7 @@ class ATRField(SageObject):
         print(min_imag_part_original)
         limits=[]
         for filename in self.WW:
-        	limits.extend([Limit(*l[0],conj=l[1]) for l in load(filename)])
+                limits.extend([Limit(*l[0],conj=l[1]) for l in load(filename)])
         print('Min Imag part after prepare_limits:')
         tmp=min([oo]+[l.imaginary_part_approx() for l in limits])
 
@@ -669,14 +657,14 @@ class ATRField(SageObject):
         for P in limits:
             conjug=P.conj
             P=P.unpack()
-            if P[1]!=infinity:
+            if P[1] is not Infinity:
                 Points.extend([(Cf(P[0]),Cf(P[1]),conjug,1),(Cf(P[2]),Cf(P[1]),conjug,-1)])
                 Points0.extend([Cf(P[0]),Cf(P[2])])
                 Points1.extend([Cf(P[1]),Cf(P[1])])
                 Points2.extend([conjug,conjug])
                 Points3.extend([1,-1])
                 Npoints+=2
-            if P[3]!=infinity:
+            if P[3] is not Infinity:
                 Points.extend([(Cf(P[0]),Cf(P[3]),conjug,-1),(Cf(P[2]),Cf(P[3]),conjug,1)])
                 Points0.extend([Cf(P[0]),Cf(P[2])])
                 Points1.extend([Cf(P[3]),Cf(P[3])])
@@ -686,9 +674,9 @@ class ATRField(SageObject):
         t=walltime()
         if parallel:
             if n_cpus is None:
-                n_cpus=sage.parallel.ncpus.ncpus()
+                n_cpus=ncpus()
             print('n_cpus=%s'%n_cpus)
-            N=ceil(len(Points)/(n_cpus*expand_factor))
+            N=ceil(QQ(len(Points))/(n_cpus*expand_factor))
             M=ceil(QQ(m1-m0)/(n_cpus*expand_factor))
             inputs=[]
             for ii in range(n_cpus*expand_factor):
@@ -739,7 +727,7 @@ class ATRField(SageObject):
     def approximate(self,Z,epsilon=None):
         initial_time=cputime()
         if epsilon is None:
-            epsilon=self.find_epsilon(z0,z1)
+            epsilon=self.find_epsilon(Z)
         x=(Z[0].real(),Z[1].real())
         y=(Z[0].imag(),Z[1].imag())
         e=self.e
@@ -748,7 +736,7 @@ class ATRField(SageObject):
         y0approx,y1approx=RealField(prec_bits)(y[0]),RealField(prec_bits)(y[1])
         y0sq,y1sq=y0approx**2,y1approx**2
 
-        M=(1/epsilon).ceil()
+        M=(ZZ(1)/epsilon).ceil()
         w=self.base.maximal_order().ring_generators()[0]
         matches=dict([])
         for c1,nrm in self.SmallInts():
@@ -808,8 +796,8 @@ class ATRField(SageObject):
         if e00>1:
             em,e0m,sign=-self.e,-self.e0,1
         else:
-            e00=1/e00
-            em,e0m,sign=-1/self.e,-1/self.e0,-1
+            e00=ZZ(1)/e00
+            em,e0m,sign=-ZZ(1)/self.e,-ZZ(1)/self.e0,-1
 
         assert(self.v0approx(self.e)>0)
         x0,x1=Z[0],Z[1]
@@ -836,15 +824,15 @@ class ATRField(SageObject):
         # print('xx=',xx)
 
         Rf=RealField(prec_bits)
-        tmp=(2**LOW_PREC_BITS*((self.C**2*Rf(xx[0].imag())*Rf(xx[1].imag()))**(.25))).round()/2**LOW_PREC_BITS
+        tmp=(ZZ(2)**LOW_PREC_BITS*((self.C**2*Rf(xx[0].imag())*Rf(xx[1].imag()))**(RealNumber('.25')))).round()/ZZ(2)**LOW_PREC_BITS
         # print('Would like eps =',RealField()(tmp))
-        if tmp<1/50:
+        if tmp<ZZ(1)/50:
             A=self.C**2*(xx[0].imag()**2+xx[1].imag()**2)
             B=(self.C**2*xx[0].imag()*xx[1].imag())**2
-            if A>=1 or B>=((1-A)/2)**2:
+            if A>=1 or B>=((1-A)/ZZ(2))**2:
                 raise RuntimeError
-            tmp=((100*(((1/lam-A)+RealField()(((1/lam-A)**2-4*B)).sqrt())/2)**(1/4)).floor())/100
-            if tmp<1/100:
+            tmp=((100*(((ZZ(1)/lam-A)+RealField()(((ZZ(1)/lam-A)**2-4*B)).sqrt())/ZZ(2))**(ZZ(1)/4)).floor())/ZZ(100)
+            if tmp<ZZ(1)/100:
                 raise RuntimeError
         elif tmp>=1:
             raise RuntimeError
@@ -872,7 +860,7 @@ class ATRField(SageObject):
             n_iters+=1
         if opt_delta<self.delta():
             print('Updating delta...')
-            self.ddelta=min([self.ddelta,RationalField()(9/10)*RationalField()(((2**LOW_PREC_BITS*opt_delta).ceil())/2**LOW_PREC_BITS)])
+            self.ddelta=min([self.ddelta,RationalField()(ZZ(9)/10)*RationalField()(((ZZ(2)**LOW_PREC_BITS*opt_delta).ceil())/ZZ(2)**LOW_PREC_BITS)])
             print('New delta =',RealField()(self.ddelta))
         #print('Done with move_to_siegel_domain.')
         return opt_g,opt_delta,opt_conj
@@ -903,7 +891,7 @@ class ATRField(SageObject):
                 return MM,bound,conjugate
             try:
                 #print('Entering approximate...')
-                c,d=self.approximate(Z,epsilon=1/2)
+                c,d=self.approximate(Z,epsilon=ZZ(1)/2)
                 #print('Done with approximate')
                 MM=matrix_from_bottom_row(self.base,c,d)*MM
 
@@ -931,16 +919,16 @@ class ATRField(SageObject):
     #     return Q.real()+t*self.I
 
     def intersect_with_boundary(self,P,Q,t0):
-        t=RationalField()(((RealField(prec_bits)(2**LOW_PREC_BITS*t0)).round())/2**LOW_PREC_BITS)
+        t=RationalField()(((RealField(prec_bits)(ZZ(2)**LOW_PREC_BITS*t0)).round())/ZZ(2)**LOW_PREC_BITS)
         P0=RealField(prec_bits)(P.real())
         Q0=RealField(prec_bits)(Q.real())
     
-        if abs(P0-Q0)<2**(-10):
+        if abs(P0-Q0)<ZZ(2)**(-10):
             m=(P.real()-Q.real())/(P.imag()-Q.imag())
             return P.real()+m*(t-P.imag())+t*self.I
         a,r2=self.geodesic(P,Q)
         tmp1=(r2-t**2)
-        tmp=RationalField()(((2**LOW_PREC_BITS*((RealField(prec_bits)(tmp1)).sqrt())).round())/(2**LOW_PREC_BITS))
+        tmp=RationalField()(((ZZ(2)**LOW_PREC_BITS*((RealField(prec_bits)(tmp1)).sqrt())).round())/(ZZ(2)**LOW_PREC_BITS))
         if P0<Q0:
             realparts=[P.real(),Q.real()]
             r0=P0
@@ -968,7 +956,7 @@ class ATRField(SageObject):
         #         return filename,ww_info+len(tmp)
         # except IOError: pass
         if deltas is None:
-            tolerance=RationalField()(9/10)
+            tolerance=RationalField()(ZZ(9)/10)
             d00=self.delta(C=self.estimated_C)*tolerance**2
             d11=self.delta(C=self.estimated_C)*tolerance
         else:
@@ -980,8 +968,8 @@ class ATRField(SageObject):
         if e00>1:
             em,e0m,sign=-self.e,-self.e0,1
         else:
-            e00=1/e00
-            em,e0m,sign=-1/self.e,-1/self.e0,-1
+            e00=ZZ(1)/e00
+            em,e0m,sign=-ZZ(1)/self.e,-ZZ(1)/self.e0,-1
         e0mapprox=self.v0approx(em)
 
         part=RationalField()(100)/len(vec)
@@ -992,13 +980,13 @@ class ATRField(SageObject):
             else:
                 print('We break it')
                 x0,x1,y0,y1=l.unpack()
-                n=ZZ((max(map(lambda x:((((-RealField(prec_bits)(x.imag()).log()))/((-e0mapprox).log()))).round(),[x0,y0]))))
+                n=ZZ((max([((((-RealField(prec_bits)(x.imag()).log()))/((-e0mapprox).log()))).round() for x in [x0,y0]])))
                 e0xxn=(-e0mapprox)**n
                 V.append((Limit(x0,x1,y0,self.I*e0xxn,conj=l.conj),part))
                 if n%2==0:
-                	W.append(Limit(x0*e0xxn,self.I,y0*e0xxn,y1,conj=l.conj))
+                        W.append(Limit(x0*e0xxn,self.I,y0*e0xxn,y1,conj=l.conj))
                 else:
-                	W.append(Limit((-x0*e0xxn).conjugate(),self.I,(-y0*e0xxn).conjugate(),y1,conj=-l.conj))
+                        W.append(Limit((-x0*e0xxn).conjugate(),self.I,(-y0*e0xxn).conjugate(),y1,conj=-l.conj))
         t=None
         flag=False
         ii=0
@@ -1032,54 +1020,54 @@ class ATRField(SageObject):
             if y1app is not Infinity and x0app.imag()*y1app.imag()<d1sq:
                 t1=self.intersect_with_boundary(x1,y1,d1sq/x0app.imag())
                 #print('t1img=',RealField()(t1.imag()))
-                print('A',)
+                print('A', end=' ')
                 t1app=ComplexField(LOWER_PREC_BITS)(t1)
                 if y0app.imag()*t1app.imag()<d0sq:
                     print('1')
                     t0=self.intersect_with_boundary(x0,y0,d0sq/t1app.imag())
                     #print('t0img=',RealField()(t0.imag()))
-                    newV=[(Limit(t0,x1,y0,t1,conj),part/3),(Limit(x0,t1,y0,y1,conj),part/3)]
+                    newV=[(Limit(t0,x1,y0,t1,conj),part/ZZ(3)),(Limit(x0,t1,y0,y1,conj),part/ZZ(3))]
                     newW=[Limit(x0,x1,t0,t1,conj)]
-                    progress+=part/3
+                    progress+=part/ZZ(3)
                 else:
                     print('2')
-                    newV=[(Limit(x0,t1,y0,y1,conj),part/2)]
+                    newV=[(Limit(x0,t1,y0,y1,conj),part/ZZ(2))]
                     newW=[Limit(x0,x1,y0,t1,conj)]
-                    progress+=part/2
+                    progress+=part/ZZ(2)
             elif x1app.imag()*y0app.imag()<d1sq:
                 t0=self.intersect_with_boundary(x0,y0,d1sq/x1app.imag())
                 #print('t0img=',RealField()(t0.imag()))
-                print('B',)
+                print('B', end=' ')
 
                 t0app=ComplexField(LOWER_PREC_BITS)(t0)
                 if y1app is not Infinity and y1app.imag()*t0app.imag()<d0sq:
                     print('1')
                     t1=self.intersect_with_boundary(x1,y1,d0sq/t0app.imag())
                     #print('t1img=',RealField()(t1.imag()))
-                    newV=[(Limit(t0,x1,y0,y1,conj),part/3),(Limit(x0,t1,t0,y1,conj),part/3)]
+                    newV=[(Limit(t0,x1,y0,y1,conj),part/ZZ(3)),(Limit(x0,t1,t0,y1,conj),part/ZZ(3))]
                     newW=[Limit(x0,x1,t0,t1,conj)]
-                    progress+=part/3
+                    progress+=part/ZZ(3)
                 else:
                     print('2')
-                    newV=[(Limit(t0,x1,y0,y1,conj),part/2)]
+                    newV=[(Limit(t0,x1,y0,y1,conj),part/ZZ(2))]
                     newW=[Limit(x0,x1,t0,y1,conj)]
-                    progress+=part/2
+                    progress+=part/ZZ(2)
             elif y1app is not Infinity and y0app.imag()*y1app.imag()<d0sq:
                 t0=self.intersect_with_boundary(x0,y0,d0sq/y1app.imag())
                 #print('t0img=',RealField()(t0.imag()))
-                print('C',)
+                print('C', end=' ')
 
                 t0app=ComplexField(LOWER_PREC_BITS)(t0)
                 if t0app.imag()*x1app.imag()<d1sq:
                     print('1')
-                    newV=[(Limit(t0,x1,y0,y1,conj),part/2),(Limit(x0,x1,t0,y1,conj),part/2)]
+                    newV=[(Limit(t0,x1,y0,y1,conj),part/ZZ(2)),(Limit(x0,x1,t0,y1,conj),part/ZZ(2))]
                     newW=[]
                     progress+=0
                 else:
                     print('2')
-                    newV=[(Limit(t0,x1,y0,y1,conj),part/2)]
+                    newV=[(Limit(t0,x1,y0,y1,conj),part/ZZ(2))]
                     newW=[Limit(x0,x1,t0,y1,conj)]
-                    progress+=part/2
+                    progress+=part/ZZ(2)
             else:
                 print('D')
                 newV=[]
@@ -1110,28 +1098,28 @@ class ATRField(SageObject):
         N=Nold+D
         for a in range(2*Nold):
             amod2=a%2
-            a2=QQ(a/2)
-            for b in filter(lambda x:x%2==amod2,range((2*Nold/sqrtD).ceil(),(2*N/sqrtD).ceil())):
-                b2=QQ(b/2)
+            a2=QQ(a/ZZ(2))
+            for b in [x for x in range((2*Nold/sqrtD).ceil(),(2*N/sqrtD).ceil()) if x%2==amod2]:
+                b2=QQ(b/ZZ(2))
                 nrm=(a2+b2*sqrtD).floor()
                 #c1=a2-b2
                 #d1=b*r
                 try:
                     self.cached_ints[nrm].append((a2,b2))
-                except KeyError,AttributeError:
+                except KeyError:
                     self.cached_ints[nrm]=[(a2,b2)]
 
         for a in range(2*Nold,2*N):
             amod2=a%2
-            a2=QQ(a/2)
-            for b in filter(lambda x:x%2==amod2,range((2*N/sqrtD).ceil())):
-                b2=QQ(b/2)
+            a2=QQ(a/ZZ(2))
+            for b in [x for x in range((2*N/sqrtD).ceil()) if x%2==amod2]:
+                b2=QQ(b/ZZ(2))
                 nrm=(a2+b2*sqrtD).floor()
                 #c1=a2-b2
                 #d1=b*r
                 try:
                     self.cached_ints[nrm].append((a2,b2))
-                except KeyError,AttributeError:
+                except KeyError:
                     self.cached_ints[nrm]=[(a2,b2)]
         self.cached_ints_N=N
 
@@ -1251,7 +1239,7 @@ class TestDL:
         hK=self.F.extension(Y**2-self.alpha,names='beta').class_number()
         print('Class number =',hK)
         if hK>2:
-            raise NotImplementedError, "Only deal with class number up to 2"
+            raise NotImplementedError("Only deal with class number up to 2")
         if Jtau is None:
             self.Jtau=0
         else:
@@ -1293,14 +1281,14 @@ class TestDL:
 
         found = False
         for ii in range(len(emb)):
-            if abs(emb[ii](self.F.gen())-self.K[0].v0(self.F.gen()))<10**(-10):
+            if abs(emb[ii](self.F.gen())-self.K[0].v0(self.F.gen()))<ZZ(10)**(-10):
                 found = True
                 self.v0K=emb[ii]
         assert found
 
         found = False
         for ii in range(len(emb)):
-            if abs(emb[ii](self.F.gen())-self.K[0].v1(self.F.gen()))<10**(-10):
+            if abs(emb[ii](self.F.gen())-self.K[0].v1(self.F.gen()))<ZZ(10)**(-10):
                 found = True
                 self.v1K=emb[ii]
         assert found
@@ -1311,21 +1299,21 @@ class TestDL:
         self.LK1 = EK.period_lattice(self.v1K)
 
         B=self.LK0.basis(prec_bits)
-        if abs(B[0].real())>10**(-10):
+        if abs(B[0].real())>ZZ(10)**(-10):
             lambda_0_plus_K=B[0].real()
         else:
             lambda_0_plus_K=B[1].real()
-        if abs(B[0].imag())>10**(-10):
+        if abs(B[0].imag())>ZZ(10)**(-10):
             lambda_0_minus_K=B[0].imag()*ComplexField(prec_bits).gen()
         else:
             lambda_0_minus_K=B[1].imag()*ComplexField(prec_bits).gen()
 
         B=self.LK1.basis(prec_bits)
-        if abs(B[0].real())>10**(-10):
+        if abs(B[0].real())>ZZ(10)**(-10):
             lambda_1_plus_K=B[0].real()
         else:
             lambda_1_plus_K=B[1].real()
-        if abs(B[0].imag())>10**(-10):
+        if abs(B[0].imag())>ZZ(10)**(-10):
             lambda_1_minus_K=B[0].imag()*ComplexField(prec_bits).gen()
         else:
             lambda_1_minus_K=B[1].imag()*ComplexField(prec_bits).gen()
@@ -1335,13 +1323,13 @@ class TestDL:
         self.lambda_1_minus_K=lambda_1_minus_K
         self.lambda_1_plus_K=lambda_1_plus_K
 
-        #this is the complex number in C/Lambda_0 corresponding to the nontorsion point	
+        #this is the complex number in C/Lambda_0 corresponding to the nontorsion point 
         self.z=self.LK0.elliptic_logarithm(P,prec = prec_bits,reduce = True)
         #a small verification that z is the correct value
         try:
             exp_tildeP=self.LK0.elliptic_exponential(self.z)
             print('Verifying that z is the correct value...')
-            assert ((exp_tildeP[0]-self.v0K(P[0])).abs()<1E-12) and ((exp_tildeP[1]-self.v0K(P[1])).abs()<1E-12)
+            assert ((exp_tildeP[0]-self.v0K(P[0])).abs()<RealNumber('1E-12')) and ((exp_tildeP[1]-self.v0K(P[1])).abs()<RealNumber('1E-12'))
             print('Checking that the real part of z is indeed torsion. This should be a small linear relation:')
             print(gp.lindep([self.z.real(),self.lambda_0_plus_K],25))
         except ArithmeticError:
@@ -1358,33 +1346,6 @@ class TestDL:
         print(gp.lindep([(Jtau/self.lambda_1_plus_K).imag(),z.imag(),self.lambda_0_minus_K.imag()],self.prec-1))
         print('Verification of the real part of the point (should be torsion)')
         print(gp.lindep([(Jtau/self.lambda_1_plus_K).real(),self.lambda_0_plus_K],self.prec-1))
-
-def find_alpha(E, x_coord):
-    F = E.base_ring()
-    ff=E.defining_polynomial()
-    Fx=PolynomialRing(F,names='Y')
-    Y=Fx.gen()
-    R=ff.parent()
-    phi=R.hom([x_coord,Y,1])
-    alpha=phi(ff).discriminant()
-    alpha*=ZZ(alpha.denominator())**2
-    vv=alpha.factor()
-    if vv.unit().is_square():
-        alpha=F(1)
-    elif (-vv.unit()).is_square():
-        alpha=F(-1)
-    elif (vv.unit()/F.units()[0]).is_square():
-        alpha=F.units()[0]
-    elif (-vv.unit()/F.units()[0]).is_square():
-        alpha=-F.units()[0]
-    else:
-        raise RuntimeError, "Don't know what to do here..."
-    for xx in vv:
-        if xx[1]%2==1:
-            alpha*=xx[0]
-    return alpha
-
-
 
 # def integrate_hiprec(Points0,Points1,Points2,Points3,atrfield,hmf, m0,m1, preci, swap, Npoints):
 #     # print('Integrating in high precision!')

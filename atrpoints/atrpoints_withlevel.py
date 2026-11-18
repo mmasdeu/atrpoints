@@ -1,58 +1,29 @@
-prec_bits=2000
-TIME_LIMIT=10
-LOW_PREC_BITS=300
-LOWER_PREC_BITS=100
-from itertools import islice,product
-from sage.misc.cachefunc import disk_cached_function
-import pickle
-from sage.parallel.all import fork
+r"""
+ATR points on elliptic curves over real quadratic fields, with level.
+
+Same as :mod:`atrpoints.atrpoints` but for curves of nontrivial conductor N: the
+integrals are taken over Gamma_1(N) (see :mod:`atrpoints.utility` for the optimal
+embeddings and the decomposition of the limits). The main entry point is :class:`TestDL`.
+"""
 import gc
+import pickle
+import sys
 from array import array
 from bisect import bisect_left
-NCPUS=sage.parallel.ncpus.ncpus()
-from sage.parallel.all import fork
+
+from sage.all import *
+from itertools import islice, product  # after sage.all: itertools.product, not Sage's product
+from sage.misc.cachefunc import disk_cached_function
+from sage.parallel.all import fork, parallel
+from sage.parallel.ncpus import ncpus
+
+from .atr_cython_withlevel import *
+from .quadcontfrac import *
+from .utility import *
+
+NCPUS = ncpus()
 sys.setrecursionlimit(10**7)
-from quadcontfrac import *
-load('atr_cython_withlevel.spyx')
-load('utility.sage')
 
-class Limit(SageObject):
-    def __init__(self,x0,x1,y0,y1,conj=1,scale = 1):
-        self.x0,self.x1,self.y0,self.y1=x0,x1,y0,y1
-        self.x0app,self.x1app,self.y0app=ComplexField()(x0),ComplexField()(x1),ComplexField()(y0)
-        if y1 is Infinity:
-            self.y1app=Infinity
-        else:
-            self.y1app=ComplexField()(y1)
-        self.conj=conj
-        self.scale = scale
-
-    def volume(self):
-        v1 = RR(acosh(1+(self.x0-self.y0).abs()/(2*self.x0.imag()*self.y0.imag())))
-        v2 = RR(acosh(1+(self.x1-self.y1).abs()/(2*self.x1.imag()*self.y1.imag())))
-        return v1*v2
-
-    def unpack(self):
-        return self.x0,self.x1,self.y0,self.y1
-
-    def imaginary_part_approx(self):
-        x0app,x1app,y0app,y1app=self.x0app,self.x1app,self.y0app,self.y1app
-        rr=min([(z1.imag()*z2.imag()).sqrt() for z1,z2 in [(x0app,x1app),(x0app,y1app),(y0app,x1app),(y0app,y1app)] if z2 is not Infinity])
-        return rr
-    def __str__(self):
-        return str(self.unpack())
-    def x(self):
-        return (x0,x1)
-    def y(self):
-        return (y0,y1)
-    def sw(self):
-        return self.x0
-    def se(self):
-        return self.x1
-    def nw(self):
-        return self.y0
-    def ne(self):
-        return self.y1
 
 #this is a Hilbert Modular Form
 class HilbertModularForm(SageObject):
@@ -67,13 +38,13 @@ class HilbertModularForm(SageObject):
             self.E=E
             self.F=self.E.base_field()
             self.D=self.F.disc()
-            assert(2**valuation(expand_factor,2)==expand_factor)
+            assert(ZZ(2)**valuation(expand_factor,2)==expand_factor)
             self.aprs=dict({ZZ(1):[[(1,1,1)]]})
             self.init_embeddings()
             if n_cpus is None:
-                n_cpus=sage.parallel.ncpus.ncpus()
+                n_cpus=ncpus()
             print('n_cpus=%s'%n_cpus)
-            assert(2**valuation(n_cpus,2)==n_cpus)
+            assert(ZZ(2)**valuation(n_cpus,2)==n_cpus)
             M=n_cpus*expand_factor
             congN=2*M
             pari.init_primes(2*max_norm_aprs)
@@ -96,7 +67,7 @@ class HilbertModularForm(SageObject):
        
             self.v1=v1
             if v0(e2).abs()<1:
-                e2=1/e2
+                e2=ZZ(1)/e2
             print('M=',M)
             # inputs=[(self,max_norm_aprs,congN,1,[2])]+[(self,max_norm_aprs,congN,a%congN,[]) for a in range(3,congN,2)]
             print('Computing data for small primes... (up to %s)'%self.small_norm)
@@ -118,7 +89,7 @@ class HilbertModularForm(SageObject):
                         newvec.append(get_all_combinations_small(self,ff,newdict))
 
             self.aprs_small=newdict
-            large_primes=filter(lambda xx:kronecker_symbol(self.F.discriminant(),xx)!=-1,prime_range(self.small_norm,max_norm_aprs))
+            large_primes=[xx for xx in prime_range(self.small_norm,max_norm_aprs) if kronecker_symbol(self.F.discriminant(),xx)!=-1]
             if large_prime_data is None:
                 print('Starting the massive computation now...')
                 #large_primes=[xx for xx in prime_range(self.small_norm,max_norm_aprs) if kronecker_symbol(self.F.discriminant(),xx)!=-1]
@@ -163,8 +134,8 @@ class HilbertModularForm(SageObject):
         v10=v1(self.F.gen())
         self.v00=v0
         self.v10=v1
-        v00exact=QQbar.polynomial_root(self.F.polynomial(),RIF(v00-1/10,v00+1/10))
-        v10exact=QQbar.polynomial_root(self.F.polynomial(),RIF(v10-1/10,v10+1/10))
+        v00exact=QQbar.polynomial_root(self.F.polynomial(),RIF(v00-ZZ(1)/10,v00+ZZ(1)/10))
+        v10exact=QQbar.polynomial_root(self.F.polynomial(),RIF(v10-ZZ(1)/10,v10+ZZ(1)/10))
         self.v0approx=self.F.hom([RealField(prec_bits)(v00exact)],RealField(prec_bits),check=False)
         self.v1approx=self.F.hom([RealField(prec_bits)(v10exact)],RealField(prec_bits),check=False)
 
@@ -203,12 +174,13 @@ class ATRField(SageObject):
         self.alpha=alpha
         self.level = level
         if not self.is_ATR():
-            raise ValueError,'Error: the extension is not ATR'
-        Q.<y>=PolynomialRing(F)
+            raise ValueError('Error: the extension is not ATR')
+        Q = PolynomialRing(F, names='y')
+        y = Q.gen()
         #ext is the field extension K, with generator beta
-        self.ext=F.extension(y^2-alpha,'beta')
+        self.ext=F.extension(y**2-alpha,'beta')
 
-       	#we create the embeddings v0,v1 of F, so that v0 extends to a complex embedding of K and v1 extends to a real embedding of K
+        #we create the embeddings v0,v1 of F, so that v0 extends to a complex embedding of K and v1 extends to a real embedding of K
         self.v0,self.v1,self.v0approx,self.v1approx,self.swapped_embeddings = find_embeddings(F,self.ext)
         #e is the fundamental unit, chosen such that v0(e)>0 and v1(e)<0 and v0(e)>1.
         self.e = find_fundamental_unit(F,self.v0,self.v0approx)
@@ -216,7 +188,7 @@ class ATRField(SageObject):
 
         self.e0=self.v0(self.e)
         self.e0approx=self.v0approx(self.e)
-        self.epssqrt=((RealField(prec_bits)(2**LOW_PREC_BITS*self.e0approx.sqrt())).round())/2**LOW_PREC_BITS
+        self.epssqrt=((RealField(prec_bits)(ZZ(2)**LOW_PREC_BITS*self.e0approx.sqrt())).round())/ZZ(2)**LOW_PREC_BITS
         self.e1=self.v1(self.e)
         #this is a unit of K (we have to check that it is not the fundamental unit of F)
 
@@ -244,7 +216,7 @@ class ATRField(SageObject):
         self.d0=self.v0(self.d)
         self.d1=self.v1(self.d)
 
-        self.estimated_C=self.estimate_C(1/10).ceil()
+        self.estimated_C=self.estimate_C(ZZ(1)/10).ceil()
         if C is None:
             self.C=self.estimated_C
         else:
@@ -262,17 +234,18 @@ class ATRField(SageObject):
         F=self.base
         if alpha is None:
             alpha=self.alpha
-        Q.<y>=PolynomialRing(F)
+        Q = PolynomialRing(F, names='y')
+        y = Q.gen()
         y=Q.gen()
-        if not (y^2-alpha).is_irreducible():
+        if not (y**2-alpha).is_irreducible():
             return False
-        K=NumberField(y^2-alpha,'beta')
+        K=NumberField(y**2-alpha,'beta')
         if len(K.real_embeddings())==2:
             return True
         return False
 
     def estimate_number_limits(self, original_volume):
-        return ZZ((original_volume/(acosh(RR(1+1/(200*.9*.9)))**2)).ceil())
+        return ZZ((original_volume/(acosh(RR(1+ZZ(1)/(200*RealNumber('.9')*RealNumber('.9'))))**2)).ceil())
 
     def prepare_limits(self,deltas=None,lims_from_disk=None,rng=None,out_limits=None,cusp_cf=None,max_length = 0,threshold = None, assume_E1 = False, level = 1):
         V=None
@@ -285,7 +258,7 @@ class ATRField(SageObject):
             except IOError: pass
         if V is None:
             if threshold is None:
-                threshold = 10**(-3)
+                threshold = ZZ(10)**(-3)
             if level == 1:
                 V,img_part = quotients_and_limits(self.base, self.tau_0, self.v0, self.v0approx, self.v1,cusp_cf, max_length,threshold,assume_E1,level = level)
             else:
@@ -336,7 +309,7 @@ class ATRField(SageObject):
         self.VV=V
         self.WW=[]
         if rng is None:
-            rng=range(len(V))
+            rng=list(range(len(V)))
         ww_info=0
         for ii in rng:
             new_WW,ww_info=self.break_limits([V[ii]],deltas,ii,ww_info)
@@ -345,7 +318,7 @@ class ATRField(SageObject):
         print(min_imag_part_original)
         limits=[]
         for filename in self.WW:
-        	limits.extend([Limit(*l[0],conj=l[1]) for l in load(filename)])
+                limits.extend([Limit(*l[0],conj=l[1]) for l in load(filename)])
         print('Min Imag part after prepare_limits:')
         tmp=min([oo]+[l.imaginary_part_approx() for l in limits])
         print(tmp)
@@ -374,14 +347,14 @@ class ATRField(SageObject):
         for P in limits:
             conjug=P.conj
             P=P.unpack()
-            if P[1]!=infinity:
+            if P[1] is not Infinity:
                 Points.extend([(Cf(P[0]),Cf(P[1]),conjug,1),(Cf(P[2]),Cf(P[1]),conjug,-1)])
                 Points0.extend([Cf(P[0]),Cf(P[2])])
                 Points1.extend([Cf(P[1]),Cf(P[1])])
                 Points2.extend([conjug,conjug])
                 Points3.extend([1,-1])
                 Npoints+=2
-            if P[3]!=infinity:
+            if P[3] is not Infinity:
                 Points.extend([(Cf(P[0]),Cf(P[3]),conjug,-1),(Cf(P[2]),Cf(P[3]),conjug,1)])
                 Points0.extend([Cf(P[0]),Cf(P[2])])
                 Points1.extend([Cf(P[3]),Cf(P[3])])
@@ -391,9 +364,9 @@ class ATRField(SageObject):
         t=walltime()
         if parallel:
             if n_cpus is None:
-                n_cpus=sage.parallel.ncpus.ncpus()
+                n_cpus=ncpus()
             print('n_cpus=%s'%n_cpus)
-            N=ceil(len(Points)/(n_cpus*expand_factor))
+            N=ceil(QQ(len(Points))/(n_cpus*expand_factor))
             M=ceil(QQ(m1-m0)/(n_cpus*expand_factor))
             inputs=[]
             for ii in range(n_cpus*expand_factor):
@@ -444,7 +417,7 @@ class ATRField(SageObject):
     def approximate(self,Z,epsilon=None):
         initial_time=cputime()
         if epsilon is None:
-            epsilon=self.find_epsilon(z0,z1)
+            epsilon=self.find_epsilon(Z)
         x=(Z[0].real(),Z[1].real())
         y=(Z[0].imag(),Z[1].imag())
         e=self.e
@@ -453,7 +426,7 @@ class ATRField(SageObject):
         y0approx,y1approx=RealField(prec_bits)(y[0]),RealField(prec_bits)(y[1])
         y0sq,y1sq=y0approx**2,y1approx**2
 
-        M=(1/epsilon).ceil()
+        M=(ZZ(1)/epsilon).ceil()
         w=self.base.maximal_order().ring_generators()[0]
         matches=dict([])
         for c1,nrm in self.SmallInts():
@@ -513,8 +486,8 @@ class ATRField(SageObject):
         if e00>1:
             em,e0m,sign=-self.e,-self.e0,1
         else:
-            e00=1/e00
-            em,e0m,sign=-1/self.e,-1/self.e0,-1
+            e00=ZZ(1)/e00
+            em,e0m,sign=-ZZ(1)/self.e,-ZZ(1)/self.e0,-1
 
         assert(self.v0approx(self.e)>0)
         x0,x1=Z[0],Z[1]
@@ -541,15 +514,15 @@ class ATRField(SageObject):
         # print('xx=',xx)
 
         Rf=RealField(prec_bits)
-        tmp=(2**LOW_PREC_BITS*((self.C**2*Rf(xx[0].imag())*Rf(xx[1].imag()))**(.25))).round()/2**LOW_PREC_BITS
+        tmp=(ZZ(2)**LOW_PREC_BITS*((self.C**2*Rf(xx[0].imag())*Rf(xx[1].imag()))**(RealNumber('.25')))).round()/ZZ(2)**LOW_PREC_BITS
         # print('Would like eps =',RealField()(tmp))
-        if tmp<1/50:
+        if tmp<ZZ(1)/50:
             A=self.C**2*(xx[0].imag()**2+xx[1].imag()**2)
             B=(self.C**2*xx[0].imag()*xx[1].imag())**2
-            if A>=1 or B>=((1-A)/2)**2:
+            if A>=1 or B>=((1-A)/ZZ(2))**2:
                 raise RuntimeError
-            tmp=((100*(((1/lam-A)+RealField()(((1/lam-A)**2-4*B)).sqrt())/2)**(1/4)).floor())/100
-            if tmp<1/100:
+            tmp=((100*(((ZZ(1)/lam-A)+RealField()(((ZZ(1)/lam-A)**2-4*B)).sqrt())/ZZ(2))**(ZZ(1)/4)).floor())/ZZ(100)
+            if tmp<ZZ(1)/100:
                 raise RuntimeError
         elif tmp>=1:
             raise RuntimeError
@@ -577,7 +550,7 @@ class ATRField(SageObject):
             n_iters+=1
         if opt_delta<self.delta():
             print('Updating delta...')
-            self.ddelta=min([self.ddelta,RationalField()(9/10)*RationalField()(((2**LOW_PREC_BITS*opt_delta).ceil())/2**LOW_PREC_BITS)])
+            self.ddelta=min([self.ddelta,RationalField()(ZZ(9)/10)*RationalField()(((ZZ(2)**LOW_PREC_BITS*opt_delta).ceil())/ZZ(2)**LOW_PREC_BITS)])
             print('New delta =',RealField()(self.ddelta))
         #print('Done with move_to_siegel_domain.')
         return opt_g,opt_delta,opt_conj
@@ -608,7 +581,7 @@ class ATRField(SageObject):
                 return MM,bound,conjugate
             try:
                 #print('Entering approximate...')
-                c,d=self.approximate(Z,epsilon=1/2)
+                c,d=self.approximate(Z,epsilon=ZZ(1)/2)
                 #print('Done with approximate')
                 MM=matrix_from_bottom_row(self.base,c,d)*MM
 
@@ -636,16 +609,16 @@ class ATRField(SageObject):
     #     return Q.real()+t*self.I
 
     def intersect_with_boundary(self,P,Q,t0):
-        t=RationalField()(((RealField(prec_bits)(2**LOW_PREC_BITS*t0)).round())/2**LOW_PREC_BITS)
+        t=RationalField()(((RealField(prec_bits)(ZZ(2)**LOW_PREC_BITS*t0)).round())/ZZ(2)**LOW_PREC_BITS)
         P0=RealField(prec_bits)(P.real())
         Q0=RealField(prec_bits)(Q.real())
     
-        if abs(P0-Q0)<2**(-10):
+        if abs(P0-Q0)<ZZ(2)**(-10):
             m=(P.real()-Q.real())/(P.imag()-Q.imag())
             return P.real()+m*(t-P.imag())+t*self.I
         a,r2=self.geodesic(P,Q)
         tmp1=(r2-t**2)
-        tmp=RationalField()(((2**LOW_PREC_BITS*((RealField(prec_bits)(tmp1)).sqrt())).round())/(2**LOW_PREC_BITS))
+        tmp=RationalField()(((ZZ(2)**LOW_PREC_BITS*((RealField(prec_bits)(tmp1)).sqrt())).round())/(ZZ(2)**LOW_PREC_BITS))
         if P0<Q0:
             realparts=[P.real(),Q.real()]
             r0=P0
@@ -673,7 +646,7 @@ class ATRField(SageObject):
         #         return filename,ww_info+len(tmp)
         # except IOError: pass
         if deltas is None:
-            tolerance=RationalField()(9/10)
+            tolerance=RationalField()(ZZ(9)/10)
             d00=self.delta(C=self.estimated_C)*tolerance**2
             d11=self.delta(C=self.estimated_C)*tolerance
         else:
@@ -685,8 +658,8 @@ class ATRField(SageObject):
         if e00>1:
             em,e0m,sign=-self.e,-self.e0,1
         else:
-            e00=1/e00
-            em,e0m,sign=-1/self.e,-1/self.e0,-1
+            e00=ZZ(1)/e00
+            em,e0m,sign=-ZZ(1)/self.e,-ZZ(1)/self.e0,-1
         e0mapprox=self.v0approx(em)
 
         part=RationalField()(100)/len(vec)
@@ -697,13 +670,13 @@ class ATRField(SageObject):
             else:
                 print('We break it!')
                 x0,x1,y0,y1=l.unpack()
-                n=ZZ((max(map(lambda x:((((-RealField(prec_bits)(x.imag()).log()))/((-e0mapprox).log()))).round(),[x0,y0]))))
+                n=ZZ((max([((((-RealField(prec_bits)(x.imag()).log()))/((-e0mapprox).log()))).round() for x in [x0,y0]])))
                 e0xxn=(-e0mapprox)**n
                 V.append((Limit(x0,x1,y0,self.I*e0xxn,conj=l.conj),part))
                 if n%2==0:
-                	W.append(Limit(x0*e0xxn,self.I,y0*e0xxn,y1,conj=l.conj))
+                        W.append(Limit(x0*e0xxn,self.I,y0*e0xxn,y1,conj=l.conj))
                 else:
-                	W.append(Limit((-x0*e0xxn).conjugate(),self.I,(-y0*e0xxn).conjugate(),y1,conj=-l.conj))
+                        W.append(Limit((-x0*e0xxn).conjugate(),self.I,(-y0*e0xxn).conjugate(),y1,conj=-l.conj))
         t=None
         flag=False
         ii=0
@@ -743,14 +716,14 @@ class ATRField(SageObject):
                     print('1')
                     t0=self.intersect_with_boundary(x0,y0,d0sq/t1app.imag())
                     #print('t0img=',RealField()(t0.imag()))
-                    newV=[(Limit(t0,x1,y0,t1,conj),part/3),(Limit(x0,t1,y0,y1,conj),part/3)]
+                    newV=[(Limit(t0,x1,y0,t1,conj),part/ZZ(3)),(Limit(x0,t1,y0,y1,conj),part/ZZ(3))]
                     newW=[Limit(x0,x1,t0,t1,conj)]
-                    progress+=part/3
+                    progress+=part/ZZ(3)
                 else:
                     print('2')
-                    newV=[(Limit(x0,t1,y0,y1,conj),part/2)]
+                    newV=[(Limit(x0,t1,y0,y1,conj),part/ZZ(2))]
                     newW=[Limit(x0,x1,y0,t1,conj)]
-                    progress+=part/2
+                    progress+=part/ZZ(2)
             elif x1app.imag()*y0app.imag()<d1sq:
                 t0=self.intersect_with_boundary(x0,y0,d1sq/x1app.imag())
                 #print('t0img=',RealField()(t0.imag()))
@@ -760,14 +733,14 @@ class ATRField(SageObject):
                     print('1')
                     t1=self.intersect_with_boundary(x1,y1,d0sq/t0app.imag())
                     #print('t1img=',RealField()(t1.imag()))
-                    newV=[(Limit(t0,x1,y0,y1,conj),part/3),(Limit(x0,t1,t0,y1,conj),part/3)]
+                    newV=[(Limit(t0,x1,y0,y1,conj),part/ZZ(3)),(Limit(x0,t1,t0,y1,conj),part/ZZ(3))]
                     newW=[Limit(x0,x1,t0,t1,conj)]
-                    progress+=part/3
+                    progress+=part/ZZ(3)
                 else:
                     print('2')
-                    newV=[(Limit(t0,x1,y0,y1,conj),part/2)]
+                    newV=[(Limit(t0,x1,y0,y1,conj),part/ZZ(2))]
                     newW=[Limit(x0,x1,t0,y1,conj)]
-                    progress+=part/2
+                    progress+=part/ZZ(2)
             elif y1app is not Infinity and y0app.imag()*y1app.imag()<d0sq:
                 t0=self.intersect_with_boundary(x0,y0,d0sq/y1app.imag())
                 #print('t0img=',RealField()(t0.imag()))
@@ -775,14 +748,14 @@ class ATRField(SageObject):
                 t0app=ComplexField(LOWER_PREC_BITS)(t0)
                 if t0app.imag()*x1app.imag()<d1sq:
                     print('1')
-                    newV=[(Limit(t0,x1,y0,y1,conj),part/2),(Limit(x0,x1,t0,y1,conj),part/2)]
+                    newV=[(Limit(t0,x1,y0,y1,conj),part/ZZ(2)),(Limit(x0,x1,t0,y1,conj),part/ZZ(2))]
                     newW=[]
                     progress+=0
                 else:
                     print('2')
-                    newV=[(Limit(t0,x1,y0,y1,conj),part/2)]
+                    newV=[(Limit(t0,x1,y0,y1,conj),part/ZZ(2))]
                     newW=[Limit(x0,x1,t0,y1,conj)]
-                    progress+=part/2
+                    progress+=part/ZZ(2)
             else:
                 print('D')
                 newV=[]
@@ -813,28 +786,28 @@ class ATRField(SageObject):
         N=Nold+D
         for a in range(2*Nold):
             amod2=a%2
-            a2=QQ(a/2)
-            for b in filter(lambda x:x%2==amod2,range((2*Nold/sqrtD).ceil(),(2*N/sqrtD).ceil())):
-                b2=QQ(b/2)
+            a2=QQ(a/ZZ(2))
+            for b in [x for x in range((2*Nold/sqrtD).ceil(),(2*N/sqrtD).ceil()) if x%2==amod2]:
+                b2=QQ(b/ZZ(2))
                 nrm=(a2+b2*sqrtD).floor()
                 #c1=a2-b2
                 #d1=b*r
                 try:
                     self.cached_ints[nrm].append((a2,b2))
-                except KeyError,AttributeError:
+                except KeyError:
                     self.cached_ints[nrm]=[(a2,b2)]
 
         for a in range(2*Nold,2*N):
             amod2=a%2
-            a2=QQ(a/2)
-            for b in filter(lambda x:x%2==amod2,range((2*N/sqrtD).ceil())):
-                b2=QQ(b/2)
+            a2=QQ(a/ZZ(2))
+            for b in [x for x in range((2*N/sqrtD).ceil()) if x%2==amod2]:
+                b2=QQ(b/ZZ(2))
                 nrm=(a2+b2*sqrtD).floor()
                 #c1=a2-b2
                 #d1=b*r
                 try:
                     self.cached_ints[nrm].append((a2,b2))
-                except KeyError,AttributeError:
+                except KeyError:
                     self.cached_ints[nrm]=[(a2,b2)]
         self.cached_ints_N=N
 
@@ -954,7 +927,7 @@ class TestDL:
         hK=self.F.extension(Y**2-self.alpha,names='beta').class_number()
         print('Class number =',hK)
         if hK>2:
-            raise NotImplementedError, "Only deal with class number up to 2"
+            raise NotImplementedError("Only deal with class number up to 2")
         if Jtau is None:
             self.Jtau=0
         else:
@@ -978,6 +951,7 @@ class TestDL:
                 # Calculate the ATR point
                 if integrate == True:
                     print('Calculating the ATR point...')
+                    new_Jtau=self.calculate_Jtau(K,max_norm,parallel=parallel)
                     print('Jtau[%s]=%s'%(h,new_Jtau))
                 else:
                     new_Jtau = 0
@@ -995,14 +969,14 @@ class TestDL:
 
         found = False
         for ii in range(len(emb)):
-            if abs(emb[ii](self.F.gen())-self.K[0].v0(self.F.gen()))<10**(-10):
+            if abs(emb[ii](self.F.gen())-self.K[0].v0(self.F.gen()))<ZZ(10)**(-10):
                 found = True
                 self.v0K=emb[ii]
         assert found
 
         found = False
         for ii in range(len(emb)):
-            if abs(emb[ii](self.F.gen())-self.K[0].v1(self.F.gen()))<10**(-10):
+            if abs(emb[ii](self.F.gen())-self.K[0].v1(self.F.gen()))<ZZ(10)**(-10):
                 found = True
                 self.v1K=emb[ii]
         assert found
@@ -1013,21 +987,21 @@ class TestDL:
         self.LK1 = EK.period_lattice(self.v1K)
 
         B=self.LK0.basis(prec_bits)
-        if abs(B[0].real())>10**(-10):
+        if abs(B[0].real())>ZZ(10)**(-10):
             lambda_0_plus_K=B[0].real()
         else:
             lambda_0_plus_K=B[1].real()
-        if abs(B[0].imag())>10**(-10):
+        if abs(B[0].imag())>ZZ(10)**(-10):
             lambda_0_minus_K=B[0].imag()*ComplexField(prec_bits).gen()
         else:
             lambda_0_minus_K=B[1].imag()*ComplexField(prec_bits).gen()
 
         B=self.LK1.basis(prec_bits)
-        if abs(B[0].real())>10**(-10):
+        if abs(B[0].real())>ZZ(10)**(-10):
             lambda_1_plus_K=B[0].real()
         else:
             lambda_1_plus_K=B[1].real()
-        if abs(B[0].imag())>10**(-10):
+        if abs(B[0].imag())>ZZ(10)**(-10):
             lambda_1_minus_K=B[0].imag()*ComplexField(prec_bits).gen()
         else:
             lambda_1_minus_K=B[1].imag()*ComplexField(prec_bits).gen()
@@ -1041,7 +1015,7 @@ class TestDL:
         print('lambda_1_minus_K=',lambda_1_minus_K)
         print('lambda_1_plus_K=',lambda_0_plus_K)
 
-        #this is the complex number in C/Lambda_0 corresponding to the nontorsion point	
+        #this is the complex number in C/Lambda_0 corresponding to the nontorsion point 
         self.z=self.LK0.elliptic_logarithm(P,prec = prec_bits,reduce = True)
         #a small verification that z is the correct value
         try:

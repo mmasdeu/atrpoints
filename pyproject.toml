@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools", "Cython", "cysignals", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "atrpoints"
+version = "0.1.0"
+description = "Numerical verification of Darmon's conjecture on ATR points, and arithmetic groups SL_2(O_F) / Gamma_1(N) over real quadratic fields"
+readme = "README.md"
+requires-python = ">=3.9"
+# SageMath must be available; darmonpoints and tqdm are only used by atrpoints.arithgrouprq.
+dependencies = ["darmonpoints", "tqdm"]
+
+[tool.setuptools]
+packages = ["atrpoints"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

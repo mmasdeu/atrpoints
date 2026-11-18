@@ -1,7 +1,7 @@
 from darmonpoints.arithgroup import *
 from darmonpoints.homology import *
 from darmonpoints.util import *
-from quadcontfrac import *
+from .quadcontfrac import *
 from sage.all import Matrix, MatrixSpace, identity_matrix, RR, ZZ, QQ, libgap, prod, vector
 from collections import deque
 import sys
@@ -69,15 +69,30 @@ class ArithGroupRQ(ArithGroup_matrix_generic):
       For N = 1 the group is SL_2(O_F) with the presentation of [CD].
     - ``simplify`` -- (default True) whether to simplify the Reidemeister-Schreier
       presentation of Gamma_1(N) with GAP's Tietze transformations.
-
-    For N != 1 the presentation and the word problem are obtained from those of
-    SL_2(O_F) by the Reidemeister-Schreier method, using that the right cosets
-    Gamma_1(N) \ SL_2(O_F) are parametrized by bottom rows mod N.
     - ``data`` -- (default None) a file written by :meth:`save_data`; the cosets, the
       Schreier presentation and the Hermite form of the relation matrix are then loaded
       from it instead of being recomputed.
 
+    For N != 1 the presentation and the word problem are obtained from those of
+    SL_2(O_F) by the Reidemeister-Schreier method, using that the right cosets
+    Gamma_1(N) \ SL_2(O_F) are parametrized by bottom rows mod N.
     See IMPLEMENTATION.md for details.
+
+    EXAMPLES::
+
+        sage: from atrpoints import ArithGroupRQ
+        sage: F.<r> = QuadraticField(5)
+        sage: G = ArithGroupRQ(F, level=2, use_shapiro=False)  # random (progress bars)
+        sage: G.index()
+        15
+        sage: g = matrix(F, 2, 2, [1, 0, 2, 1])
+        sage: w = G.get_word_rep(g)
+        sage: G(w).quaternion_rep == g
+        True
+        sage: G.get_word_rep(matrix(F, 2, 2, [1, 0, 1, 1]))
+        Traceback (most recent call last):
+        ...
+        ValueError: Matrix does not belong to Gamma_1(N):...
     """
     _DATA_ATTRS = ['_cosets', '_coset_index', '_transversal_words', '_transversal_matrices',
                    '_tree_edges', '_coset_table', '_coset_table_inv', '_schreier_index',
@@ -98,31 +113,6 @@ class ArithGroupRQ(ArithGroup_matrix_generic):
             Matrix(self.F,2,2,[1,self.w,0,1]), # 2 = T_w
             Matrix(self.F,2,2,[self.eps,0,0,self.eps**-1]), # 3 = U
             Matrix(self.F,2,2,[0,-1,1,0])] # 4 = S
-        for g in self._ambient_Ugens:
-            g.set_immutable()
-        self._ambient_relation_words = [
-            [4, 3, -4, 3], [4,4,4,4], [4,1,4,1,4,1,4,4], [1,2,-1,-2]] + [[i,4,4,-i,-4,-4] for i in range(1,4)]
-        wd = lambda n, i : n * [i] if n > 0 else (-n) * [-i]
-        Tword = lambda x : wd(self.phi(x)[0], 1) + wd(self.phi(x)[1], 2) # T_x = T_1^a T_w^b
-        for theta in [self.F(1), self.w]:
-            a0, b0 = self.phi(theta)
-            a1, b1 = self.phi(-theta*self.eps**2)
-            self._ambient_relation_words.append([3] + wd(a0, 1) + wd(b0,2) + [-3] + wd(a1, 1) + wd(b1, 2))
-        # Unit analogue of (ST)^3 = S^2 (Cohn's universal GE_2 relation for the unit eps):
-        # T_eps S T_{eps^-1} S T_eps S = S^2 U. Without it the group presented is
-        # a proper cover of SL_2(O_F) (detected by coset enumeration, see IMPLEMENTATION.md).
-        self._ambient_relation_words.append(
-            Tword(self.eps) + [4] + Tword(self.eps**-1) + [4] + Tword(self.eps) + [4, -3, 4, 4])
-        for r in self._ambient_relation_words:
-            assert multiply_out(r, self._ambient_Ugens, self.B.one()) == 1, r
-
-        if self.level == 1:
-            self.Ugens = self._ambient_Ugens
-            self._relation_words = self._ambient_relation_words
-        else:
-            self._compute_coset_data()
-            self._compute_schreier_presentation()
-            self._compute_simplified_presentation(simplify)
         for g in self._ambient_Ugens:
             g.set_immutable()
         self._ambient_relation_words = [
